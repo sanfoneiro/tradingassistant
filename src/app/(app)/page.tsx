@@ -90,11 +90,12 @@ export default async function AccountPage() {
 
       {lastRun?.degraded && (
         <div className="rounded-xl border border-down/40 bg-down/5 px-4 py-3 text-sm">
-          <b className="text-down">Last sync ran degraded</b>{" "}
+          <b className="text-down">
+            {lastRun.agent.replaceAll("_", " ")} ran degraded
+          </b>{" "}
           <span className="text-dim">
-            ({lastRun.agent}, {ageLabel(lastRun.startedAt)}) — the agent could not
-            reach a trusted source, so nothing was overwritten.{" "}
-            {lastRun.notes ?? ""}
+            {ageLabel(lastRun.startedAt)} — it could not reach a trusted source,
+            so nothing was overwritten. {lastRun.notes ?? ""}
           </span>
         </div>
       )}
