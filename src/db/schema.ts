@@ -220,17 +220,56 @@ export const zones = pgTable(
   (t) => [index("zones_symbol_idx").on(t.symbol)],
 );
 
-export const wishlist = pgTable("wishlist", {
-  id: serial("id").primaryKey(),
-  symbol: text("symbol").notNull(),
-  thesis: text("thesis"),
-  zoneId: integer("zone_id").references(() => zones.id),
-  /** Machine-checkable, not a note: what has to happen to make this live. */
-  triggerNote: text("trigger_note"),
-  priority: integer("priority").default(3),
-  active: boolean("active").default(true).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+export const wishlist = pgTable(
+  "wishlist",
+  {
+    id: serial("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    side: sideEnum("side"),
+    thesis: text("thesis"),
+    zoneId: integer("zone_id").references(() => zones.id),
+    /** Machine-checkable, not a note: what has to happen to make this live. */
+    triggerNote: text("trigger_note"),
+    /** Price that turns this from watching into a setup. The Zone Watcher
+     *  measures distance against this. */
+    triggerLevel: doublePrecision("trigger_level"),
+    /** Distance from the trigger at the last screen, in %. Lets the
+     *  watchlist sort by "closest to going live". */
+    distancePct: doublePrecision("distance_pct"),
+    priority: integer("priority").default(3),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [uniqueIndex("wishlist_symbol_idx").on(t.symbol)],
+);
+
+/**
+ * Which screener symbols have been looked at and when.
+ *
+ * The universe lives in Oron's saved TradingView screen, not here — the app
+ * only remembers what it has already seen, so a run can ask "which have I
+ * not looked at longest?" and rotate through the list instead of
+ * re-examining the same large-caps at the top every session.
+ */
+export const screenerCoverage = pgTable(
+  "screener_coverage",
+  {
+    id: serial("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    lastScreenedAt: timestamp("last_screened_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    /** Distance to the nearest zone at that screening, in %. */
+    distancePct: doublePrecision("distance_pct"),
+    /** Did it survive the fast pass into full grading? */
+    nearZone: boolean("near_zone").default(false).notNull(),
+    trend: text("trend"), // uptrend | downtrend | contested
+    note: text("note"),
+    timesScreened: integer("times_screened").default(1).notNull(),
+  },
+  (t) => [uniqueIndex("screener_coverage_symbol_idx").on(t.symbol)],
+);
 
 /* ------------------------------------------------------------------ *
  * Suggestions — the skill's verdict, stored

@@ -7,6 +7,7 @@ import {
   orders,
   zones,
   wishlist,
+  screenerCoverage,
   suggestions,
   actionItems,
   rules,
@@ -141,12 +142,34 @@ async function readState() {
 
     orders: await db.select().from(orders),
 
-    zones: await db
-      .select()
-      .from(zones)
-      .where(eq(zones.status, "untested")),
+    zones: await db.select().from(zones),
 
-    wishlist: await db.select().from(wishlist).where(eq(wishlist.active, true)),
+    wishlist: await db
+      .select()
+      .from(wishlist)
+      .where(eq(wishlist.active, true))
+      .orderBy(wishlist.distancePct),
+
+    /**
+     * Rotation memory. The symbol universe lives in the saved TradingView
+     * screen, not here — this is only what the app has already looked at,
+     * oldest first. A run takes its batch from the top of this list (plus
+     * anything on the screen that appears nowhere in it), so coverage
+     * rotates instead of re-reading the same large-caps every session.
+     */
+    screenerCoverage: (
+      await db
+        .select()
+        .from(screenerCoverage)
+        .orderBy(screenerCoverage.lastScreenedAt)
+    ).map((s) => ({
+      symbol: s.symbol,
+      lastScreenedAt: s.lastScreenedAt,
+      distancePct: s.distancePct,
+      nearZone: s.nearZone,
+      trend: s.trend,
+      timesScreened: s.timesScreened,
+    })),
 
     openSuggestions: await db
       .select()

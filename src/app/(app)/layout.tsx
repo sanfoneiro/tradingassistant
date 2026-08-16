@@ -4,6 +4,8 @@ import { isAuthed } from "@/lib/auth";
 
 const NAV = [
   { href: "/", label: "Account" },
+  { href: "/ideas", label: "Ideas" },
+  { href: "/watchlist", label: "Watchlist" },
   { href: "/journal", label: "Journal" },
   { href: "/reports", label: "Reports" },
   { href: "/rules", label: "Rules" },

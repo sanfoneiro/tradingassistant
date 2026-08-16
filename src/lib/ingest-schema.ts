@@ -131,6 +131,47 @@ export const actionItemIn = z.object({
   ),
 });
 
+/** A name worth watching but not yet tradeable. Upserts on symbol. */
+export const wishlistIn = z.object({
+  kind: z.literal("wishlist"),
+  items: z.array(
+    z.object({
+      symbol: z.string().min(1),
+      side: sideEnum.nullable().optional(),
+      thesis: z.string().nullable().optional(),
+      zoneId: z.number().int().nullable().optional(),
+      /** What has to happen — in words, for the human. */
+      triggerNote: z.string().nullable().optional(),
+      /** The price that turns watching into a setup. */
+      triggerLevel: z.number().nullable().optional(),
+      /** % away at the time of screening. */
+      distancePct: z.number().nullable().optional(),
+      priority: z.number().int().min(1).max(5).optional(),
+      /** Send false to retire an entry whose zone broke or thesis died. */
+      active: z.boolean().optional(),
+    }),
+  ),
+});
+
+/**
+ * The fast pass: every symbol looked at this run, whether or not it
+ * survived. Recording the rejects is the point — it is what lets the next
+ * run rotate to names it has not seen instead of re-reading the top of the
+ * list forever.
+ */
+export const screenerPassIn = z.object({
+  kind: z.literal("screener_pass"),
+  symbols: z.array(
+    z.object({
+      symbol: z.string().min(1),
+      distancePct: z.number().nullable().optional(),
+      nearZone: z.boolean().default(false),
+      trend: z.enum(["uptrend", "downtrend", "contested"]).nullable().optional(),
+      note: z.string().nullable().optional(),
+    }),
+  ),
+});
+
 export const catalystIn = z.object({
   kind: z.literal("catalysts"),
   items: z.array(
@@ -156,6 +197,8 @@ export const ingestPayload = z.discriminatedUnion("kind", [
   zoneIn,
   suggestionIn,
   actionItemIn,
+  wishlistIn,
+  screenerPassIn,
   catalystIn,
   runIn,
 ]);

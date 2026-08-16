@@ -6,6 +6,8 @@ import {
   positions,
   orders,
   zones,
+  wishlist,
+  screenerCoverage,
   suggestions,
   actionItems,
   catalysts,
@@ -51,6 +53,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await handleSuggestion(p));
       case "action_items":
         return NextResponse.json(await handleActionItems(p));
+      case "wishlist":
+        return NextResponse.json(await handleWishlist(p));
+      case "screener_pass":
+        return NextResponse.json(await handleScreenerPass(p));
       case "catalysts":
         return NextResponse.json(await handleCatalysts(p));
       case "run":
@@ -443,6 +449,79 @@ function costOfDelay(
   if (kind === "close") return (markNow - markThen) * qty;
   if (kind === "move_stop") return 0; // risk-carried, not realised P&L
   return 0;
+}
+
+async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
+  let created = 0;
+  let updated = 0;
+  for (const w of p.items) {
+    const [prev] = await db
+      .select()
+      .from(wishlist)
+      .where(eq(wishlist.symbol, w.symbol))
+      .limit(1);
+
+    const values = {
+      symbol: w.symbol,
+      side: w.side ?? null,
+      thesis: w.thesis ?? null,
+      zoneId: w.zoneId ?? null,
+      triggerNote: w.triggerNote ?? null,
+      triggerLevel: w.triggerLevel ?? null,
+      distancePct: w.distancePct ?? null,
+      priority: w.priority ?? 3,
+      active: w.active ?? true,
+      updatedAt: new Date(),
+    };
+
+    if (prev) {
+      await db.update(wishlist).set(values).where(eq(wishlist.id, prev.id));
+      updated++;
+    } else {
+      await db.insert(wishlist).values(values);
+      created++;
+    }
+  }
+  return { ok: true, created, updated };
+}
+
+async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
+  let seen = 0;
+  for (const s of p.symbols) {
+    const [prev] = await db
+      .select()
+      .from(screenerCoverage)
+      .where(eq(screenerCoverage.symbol, s.symbol))
+      .limit(1);
+
+    if (prev) {
+      await db
+        .update(screenerCoverage)
+        .set({
+          lastScreenedAt: new Date(),
+          distancePct: s.distancePct ?? null,
+          nearZone: s.nearZone,
+          trend: s.trend ?? null,
+          note: s.note ?? null,
+          timesScreened: prev.timesScreened + 1,
+        })
+        .where(eq(screenerCoverage.id, prev.id));
+    } else {
+      await db.insert(screenerCoverage).values({
+        symbol: s.symbol,
+        distancePct: s.distancePct ?? null,
+        nearZone: s.nearZone,
+        trend: s.trend ?? null,
+        note: s.note ?? null,
+      });
+    }
+    seen++;
+  }
+  return {
+    ok: true,
+    recorded: seen,
+    nearZone: p.symbols.filter((s) => s.nearZone).length,
+  };
 }
 
 async function handleCatalysts(p: Extract<P, { kind: "catalysts" }>) {
