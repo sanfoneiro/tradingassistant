@@ -25,6 +25,73 @@ export function riskPerShare(entry: number, stop: number) {
   return Math.abs(entry - stop);
 }
 
+/**
+ * The three risk numbers for an open position. They are not
+ * interchangeable and conflating them produces confidently wrong advice.
+ *
+ *   capitalAtRisk  what is actually lost if the stop fills, from entry.
+ *                  Zero when the stop is past breakeven. This is what a
+ *                  move-to-breakeven removes.
+ *   riskFromMark   what equity drops by if the stop fills today, from the
+ *                  current mark. The number today's decision hangs on.
+ *   lockedGain     profit guaranteed even if the stop fills. Positive
+ *                  means the position cannot lose.
+ *
+ * Worked example — a long at 690.98 with the stop raised to 707.37:
+ * capitalAtRisk 0, lockedGain +$49, riskFromMark $70 of giveback. Taking
+ * |entry − stop| instead would report $49 of "risk" on a position that is
+ * incapable of losing money.
+ */
+export function positionRisk(p: {
+  side: "long" | "short";
+  entry: number;
+  stop: number | null;
+  mark: number | null;
+  qty: number;
+}) {
+  if (p.stop == null) {
+    // No stop is not zero risk — it is unbounded and unknowable. Say so
+    // with null rather than implying safety with a 0.
+    return { capitalAtRisk: null, riskFromMark: null, lockedGain: null };
+  }
+  const dir = p.side === "long" ? 1 : -1;
+
+  // Signed distance from entry to stop, in the direction that loses money.
+  const adverse = dir * (p.entry - p.stop);
+
+  const capitalAtRisk = Math.max(0, adverse) * p.qty;
+  const lockedGain = Math.max(0, -adverse) * p.qty;
+
+  const riskFromMark =
+    p.mark == null ? null : Math.max(0, dir * (p.mark - p.stop)) * p.qty;
+
+  return { capitalAtRisk, riskFromMark, lockedGain };
+}
+
+/**
+ * A free stop move: the position is in profit and the stop is still on the
+ * losing side of entry, so moving it to breakeven converts a possible loss
+ * into a guaranteed non-loss at zero cost.
+ *
+ * Direction matters and is easy to invert. LONG: breakeven is entry, a stop
+ * BELOW entry is the losing side, move it UP. SHORT: breakeven is entry, a
+ * stop ABOVE entry is the losing side, move it DOWN.
+ */
+export function freeStopMove(p: {
+  side: "long" | "short";
+  entry: number;
+  stop: number | null;
+  mark: number | null;
+  qty: number;
+}) {
+  const { capitalAtRisk } = positionRisk(p);
+  if (!capitalAtRisk || p.mark == null) return null;
+  const dir = p.side === "long" ? 1 : -1;
+  const inProfit = dir * (p.mark - p.entry) > 0;
+  if (!inProfit) return null;
+  return { to: p.entry, removes: capitalAtRisk };
+}
+
 export function computeDerived(t: {
   side: "long" | "short";
   entryPlanned?: number | null;

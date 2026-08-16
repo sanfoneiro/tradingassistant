@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { ingestPayload } from "@/lib/ingest-schema";
 import { checkIngestToken } from "@/lib/auth";
+import { positionRisk } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -135,12 +136,25 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
     const prev = current.find((c) => `${c.symbol}:${c.side}` === key);
 
     const dir = pos.side === "long" ? 1 : -1;
+    const fee = Math.abs(pos.fee ?? 0);
+
+    // Net of commission, so this ties out to the platform's Net P/L
+    // column. Gross P/L that almost matches is the same failure mode as
+    // a price that almost matches.
     const pl =
-      pos.mark != null ? dir * (pos.mark - pos.entry) * pos.qty : null;
+      pos.mark != null
+        ? dir * (pos.mark - pos.entry) * pos.qty - fee
+        : null;
     const plPct =
       pos.mark != null ? ((dir * (pos.mark - pos.entry)) / pos.entry) * 100 : null;
-    const riskUsd =
-      pos.stop != null ? Math.abs(pos.entry - pos.stop) * pos.qty : null;
+
+    const risk = positionRisk({
+      side: pos.side,
+      entry: pos.entry,
+      stop: pos.stop ?? null,
+      mark: pos.mark,
+      qty: pos.qty,
+    });
 
     // Water marks: keep the extreme, never regress. These are the only
     // way MAE/MFE can be known — they cannot be reconstructed later.
@@ -176,9 +190,12 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
       mark: pos.mark,
       markSource: pos.markSource,
       markAt: pos.markAt,
+      fee,
       pl,
       plPct,
-      riskUsd,
+      riskUsd: risk.capitalAtRisk,
+      riskFromMark: risk.riskFromMark,
+      lockedGain: risk.lockedGain,
       mfeRunning: mfe,
       maeRunning: mae,
       openedAt: pos.openedAt ?? prev?.openedAt ?? new Date(),

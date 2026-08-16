@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { accounts, positions, actionItems, runs, trades } from "@/db/schema";
 import { Panel, Stat, Mark, Badge, Empty, RiskBar } from "@/components/ui";
 import { usd, pct, ageLabel, freshness, SOURCE_LABEL } from "@/lib/format";
+import { freeStopMove } from "@/lib/metrics";
 import { safe, dbConfigured } from "@/lib/safe";
 
 export const dynamic = "force-dynamic";
@@ -34,14 +35,37 @@ export default async function AccountPage() {
   if (account === null && open.length === 0) return <SetupNotice noData />;
 
   const base = account?.sizingBase ?? account?.balance ?? null;
-  const totalRisk = open.reduce((a, p) => a + (p.riskUsd ?? 0), 0);
   const totalPl = open.reduce((a, p) => a + (p.pl ?? 0), 0);
+  const delayTotal = items.reduce((a, i) => a + (i.costOfDelayUsd ?? 0), 0);
+
+  // Risk from here — what equity drops by if every stop fills today. This
+  // leads the page because it is the number a decision hangs on. Entry-based
+  // risk stays available for R-multiple maths but it misranks an aged book:
+  // a position deep underwater with a nearby stop looks enormous and has
+  // almost nothing left to lose.
+  const totalRisk = open.reduce((a, p) => a + (p.riskFromMark ?? 0), 0);
   const riskSegments = open
-    .filter((p) => (p.riskUsd ?? 0) > 0)
-    .map((p) => ({ label: p.symbol, value: p.riskUsd! }))
+    .filter((p) => (p.riskFromMark ?? 0) > 0)
+    .map((p) => ({ label: p.symbol, value: p.riskFromMark! }))
     .sort((a, b) => b.value - a.value);
 
-  const delayTotal = items.reduce((a, i) => a + (i.costOfDelayUsd ?? 0), 0);
+  const noStop = open.filter((p) => p.stop == null);
+
+  // Free stop moves: in profit, stop still on the losing side of entry.
+  const freeMoves = open
+    .map((p) => {
+      const m = freeStopMove({
+        side: p.side,
+        entry: p.entry,
+        stop: p.stop,
+        mark: p.mark,
+        qty: p.qty,
+      });
+      return m ? { p, ...m } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+    .sort((a, b) => b.removes - a.removes);
+  const freeTotal = freeMoves.reduce((a, m) => a + m.removes, 0);
 
   return (
     <div className="space-y-5">
@@ -75,7 +99,7 @@ export default async function AccountPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat
           label="Balance"
           value={usd(account?.balance)}
@@ -90,10 +114,10 @@ export default async function AccountPage() {
           label="Open P/L"
           value={usd(totalPl)}
           tone={totalPl >= 0 ? "up" : "down"}
-          sub={`${open.length} position${open.length === 1 ? "" : "s"}`}
+          sub={`${open.length} position${open.length === 1 ? "" : "s"} · net of fees`}
         />
         <Stat
-          label="Open stop risk"
+          label="Risk from here"
           value={usd(totalRisk)}
           tone={
             base && totalRisk / base > 0.05
@@ -105,6 +129,16 @@ export default async function AccountPage() {
           sub={base ? `${((totalRisk / base) * 100).toFixed(2)}% of base` : undefined}
         />
         <Stat
+          label="Free stop moves"
+          value={usd(freeTotal)}
+          tone={freeTotal > 0 ? "warn" : "neutral"}
+          sub={
+            freeMoves.length
+              ? `${freeMoves.length} available, cost nothing`
+              : "none available"
+          }
+        />
+        <Stat
           label="Cost of delay"
           value={usd(delayTotal)}
           tone={delayTotal < 0 ? "down" : "neutral"}
@@ -112,12 +146,59 @@ export default async function AccountPage() {
         />
       </div>
 
+      {noStop.length > 0 && (
+        <div className="rounded-xl border border-down/40 bg-down/5 px-4 py-3 text-sm">
+          <b className="text-down">
+            {noStop.map((p) => p.symbol).join(", ")} ha
+            {noStop.length === 1 ? "s" : "ve"} no stop.
+          </b>{" "}
+          <span className="text-dim">
+            Not counted above — unstopped risk is unbounded, not zero.
+          </span>
+        </div>
+      )}
+
+      {freeMoves.length > 0 && (
+        <Panel
+          title="Free stop moves"
+          right={
+            <span className="tnum text-xs text-warn">
+              {usd(freeTotal)} removable
+            </span>
+          }
+        >
+          <ul className="space-y-2">
+            {freeMoves.map(({ p, to, removes }) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between rounded-lg border border-line bg-panel2 px-3 py-2 text-sm"
+              >
+                <span>
+                  <b>{p.symbol}</b>{" "}
+                  <span className="text-dim">
+                    {p.side === "long" ? "raise" : "lower"} stop{" "}
+                    <span className="tnum">${p.stop?.toFixed(2)}</span> →{" "}
+                    <span className="tnum text-ink">${to.toFixed(2)}</span>
+                  </span>
+                </span>
+                <span className="tnum text-warn">−{usd(removes)} risk</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-faint">
+            Each position is in profit with its stop still on the losing side of
+            entry. Moving to breakeven removes the possible loss; the open
+            profit above the new stop is still given back if it fills.
+          </p>
+        </Panel>
+      )}
+
       {riskSegments.length > 0 && (
         <Panel
           title="Where the risk actually is"
           right={
             <span className="tnum text-xs text-faint">
-              {usd(totalRisk)} total
+              {usd(totalRisk)} from here
             </span>
           }
         >
@@ -128,7 +209,8 @@ export default async function AccountPage() {
               <b className="text-ink">
                 {((riskSegments[0].value / totalRisk) * 100).toFixed(0)}%
               </b>{" "}
-              of aggregate stop risk.
+              of what can still be lost today — measured from the current mark,
+              not from entry.
             </p>
           )}
         </Panel>
@@ -149,7 +231,12 @@ export default async function AccountPage() {
                   <th className="px-2 py-2 text-right">Mark</th>
                   <th className="px-2 py-2 text-right">Stop</th>
                   <th className="px-2 py-2 text-right">P/L</th>
-                  <th className="px-2 py-2 text-right">Risk</th>
+                  <th className="px-2 py-2 text-right" title="What is lost if the stop fills today, from the current mark">
+                    Risk now
+                  </th>
+                  <th className="px-2 py-2 text-right" title="Capital lost if the stop fills, from entry. Zero when the stop is past breakeven.">
+                    At risk
+                  </th>
                   <th className="px-2 py-2 text-right">% of risk</th>
                 </tr>
               </thead>
@@ -181,11 +268,27 @@ export default async function AccountPage() {
                       </span>
                     </td>
                     <td className="tnum px-2 py-2 text-right text-dim">
-                      {usd(p.riskUsd)}
+                      {p.stop == null ? (
+                        <span className="text-down">no stop</span>
+                      ) : (
+                        usd(p.riskFromMark)
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      {(p.lockedGain ?? 0) > 0 ? (
+                        <Badge
+                          tone="up"
+                          title="The stop is past breakeven — this position cannot lose money."
+                        >
+                          locked +{usd(p.lockedGain).replace("$", "$")}
+                        </Badge>
+                      ) : (
+                        <span className="tnum text-dim">{usd(p.riskUsd)}</span>
+                      )}
                     </td>
                     <td className="tnum px-2 py-2 text-right text-faint">
-                      {totalRisk > 0 && p.riskUsd
-                        ? `${((p.riskUsd / totalRisk) * 100).toFixed(0)}%`
+                      {totalRisk > 0 && p.riskFromMark
+                        ? `${((p.riskFromMark / totalRisk) * 100).toFixed(0)}%`
                         : "—"}
                     </td>
                   </tr>

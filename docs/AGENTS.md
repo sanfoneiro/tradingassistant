@@ -45,6 +45,7 @@ validated with zod; a malformed body returns 422 with the exact issues.
     "symbol": "QQQ", "side": "long", "qty": 3,
     "entry": 690.98, "stop": 700.00, "target": 734.00,
     "mark": 731.07, "markSource": "chrome_broker", "markAt": "2026-08-17T06:05:00Z",
+    "fee": 2.00,
     "highSinceOpen": 734.39, "lowSinceOpen": 688.10
   }],
   "orders": [],
@@ -52,7 +53,12 @@ validated with zod; a malformed body returns 422 with the exact issues.
 }
 ```
 
-Three behaviours worth knowing:
+`fee` is the commission already charged, sent as a **positive** number
+(Colmex displays it negative). Without it the app's P/L is gross and will
+not tie out to the platform's Net P/L column — and a number that almost
+matches is the same failure as a price that almost matches.
+
+Four behaviours worth knowing:
 
 - **`mark: null` is a valid, correct answer.** If the platform could not be
   read for one symbol, send null. The UI renders `no mark` rather than a
@@ -64,6 +70,13 @@ Three behaviours worth knowing:
   `pending_review`, which blocks the dashboard until journalled. Send the full
   current position list every time; partial lists will close things that are
   still open.
+
+- **Risk is computed three ways and they are not interchangeable.** The app
+  derives `riskUsd` (capital lost if the stop fills, from entry — clamped to
+  zero when the stop is past breakeven), `riskFromMark` (what equity drops by
+  if the stop fills today) and `lockedGain` (profit guaranteed even if the
+  stop fills). Agents should quote **risk-from-here** when ranking positions;
+  entry-based risk misranks an aged book badly.
 
 `highSinceOpen` / `lowSinceOpen` are the extreme prices seen since the last
 sync. The server keeps the running extreme. **These are the only way MAE/MFE

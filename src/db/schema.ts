@@ -145,10 +145,30 @@ export const positions = pgTable(
     markSource: markSourceEnum("mark_source"),
     markAt: timestamp("mark_at", { withTimezone: true }),
 
+    /** Commission the broker has already charged, as a positive number.
+     *  Without it the app's P/L is gross and never ties out to the
+     *  platform — which is the one thing this app must not do. */
+    fee: doublePrecision("fee").default(0),
+
     pl: doublePrecision("pl"),
     plPct: doublePrecision("pl_pct"),
-    /** |entry - stop| * qty — dollars at risk if the stop fills. */
+
+    /** CAPITAL AT RISK: what is actually lost if the stop fills, measured
+     *  from entry. Clamped at zero — a stop past breakeven is a locked
+     *  gain, not risk, and taking an absolute value here reports a
+     *  guaranteed profit as danger. */
     riskUsd: doublePrecision("risk_usd"),
+
+    /** RISK FROM HERE: what equity drops by if the stop fills today,
+     *  measured from the current mark. This is the number a decision
+     *  hangs on. On an aged book it diverges hard from riskUsd — a
+     *  position deep underwater with a nearby stop has enormous entry
+     *  risk and almost nothing left to lose. */
+    riskFromMark: doublePrecision("risk_from_mark"),
+
+    /** Set when the stop sits past breakeven: the profit guaranteed even
+     *  if the stop fills. Positive means this position cannot lose. */
+    lockedGain: doublePrecision("locked_gain"),
 
     /** Running water marks, updated by the sync agents while open.
      *  These cannot be reconstructed after the fact — capture or lose. */

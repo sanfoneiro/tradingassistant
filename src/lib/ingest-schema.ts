@@ -27,6 +27,10 @@ export const positionIn = z.object({
   mark: z.number().nullable(),
   markSource: sourceEnum.nullable(),
   markAt: z.coerce.date().nullable(),
+  /** Commission already charged, as a POSITIVE number. Colmex shows it
+   *  negative in the Fee column — send the absolute value. Without this
+   *  the app's P/L is gross and will not match the platform. */
+  fee: z.number().nullable().optional(),
   openedAt: z.coerce.date().nullable().optional(),
   /** Running high/low water marks while the trade is open. Send the
    *  extreme price seen since the last sync; the app keeps the max. */
