@@ -4,6 +4,11 @@ out/
 build/
 .env
 .env*.local
+
+# Bearer token the skills and agents read at runtime. Never commit — this
+# repository is public.
+.agent-token
+*.token
 .DS_Store
 *.pem
 npm-debug.log*
