@@ -284,6 +284,42 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
 }
 
 async function handleZone(p: Extract<P, { kind: "zone" }>) {
+  // The MTF indicator reports entry (proximal) and SL (distal + buffer)
+  // rather than a box. Derive the box so the agent can transcribe the
+  // table column-for-column without doing arithmetic — arithmetic in a
+  // transcription step is where digits get invented.
+  const low =
+    p.low ??
+    (p.entryLevel != null && p.stopLevel != null
+      ? Math.min(p.entryLevel, p.stopLevel)
+      : null);
+  const high =
+    p.high ??
+    (p.entryLevel != null && p.stopLevel != null
+      ? Math.max(p.entryLevel, p.stopLevel)
+      : null);
+
+  if (low == null || high == null) {
+    return {
+      ok: false,
+      error:
+        "give either low+high, or entryLevel+stopLevel — the box is derived from them",
+    };
+  }
+
+  const extra = {
+    entryLevel: p.entryLevel ?? null,
+    midLevel:
+      p.midLevel ??
+      (p.entryLevel != null && p.stopLevel != null
+        ? (p.entryLevel + p.stopLevel) / 2
+        : null),
+    stopLevel: p.stopLevel ?? null,
+    distancePct: p.distancePct ?? null,
+    indicatorState: p.indicatorState ?? null,
+    lastSeenAt: new Date(),
+  };
+
   const existing = await db
     .select()
     .from(zones)
@@ -302,8 +338,9 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
     await db
       .update(zones)
       .set({
-        low: p.low,
-        high: p.high,
+        low,
+        high,
+        ...extra,
         status: p.status,
         confluence: p.confluence,
         note: p.note ?? existing[0].note,
@@ -332,8 +369,9 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
     .values({
       symbol: p.symbol,
       direction: p.direction,
-      low: p.low,
-      high: p.high,
+      low,
+      high,
+      ...extra,
       timeframe: p.timeframe,
       status: p.status,
       confluence: p.confluence,

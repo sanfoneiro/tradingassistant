@@ -141,39 +141,70 @@ export default async function WatchlistPage() {
               <thead>
                 <tr className="border-b border-line text-[11px] tracking-wider text-faint uppercase">
                   <th className="px-2 py-2 text-left">Symbol</th>
-                  <th className="px-2 py-2 text-left">Type</th>
-                  <th className="px-2 py-2 text-right">Range</th>
                   <th className="px-2 py-2 text-left">TF</th>
+                  <th className="px-2 py-2 text-left">Type</th>
+                  <th className="px-2 py-2 text-right" title="Proximal edge — where you enter">
+                    Entry
+                  </th>
+                  <th className="px-2 py-2 text-right">50%</th>
+                  <th className="px-2 py-2 text-right" title="Distal edge plus buffer — where the zone is wrong">
+                    SL
+                  </th>
+                  <th className="px-2 py-2 text-right">Dist %</th>
+                  <th className="px-2 py-2 text-left">State</th>
                   <th className="px-2 py-2 text-left">Status</th>
-                  <th className="px-2 py-2 text-left">Confluence</th>
-                  <th className="px-2 py-2 text-right">Drawn</th>
+                  <th className="px-2 py-2 text-right">Seen</th>
                 </tr>
               </thead>
               <tbody>
                 {allZones.map((z) => (
                   <tr key={z.id} className="border-b border-line/60">
                     <td className="px-2 py-2 font-semibold">{z.symbol}</td>
+                    <td className="px-2 py-2 text-xs text-dim">{z.timeframe}</td>
                     <td className="px-2 py-2">
                       <Badge tone={z.direction === "demand" ? "up" : "down"}>
                         {z.direction}
                       </Badge>
                     </td>
-                    <td className="tnum px-2 py-2 text-right text-dim">
-                      {z.low.toFixed(2)}–{z.high.toFixed(2)}
+                    <td className="tnum px-2 py-2 text-right">
+                      {z.entryLevel?.toFixed(2) ?? z.high.toFixed(2)}
                     </td>
-                    <td className="px-2 py-2 text-xs text-dim">{z.timeframe}</td>
+                    <td className="tnum px-2 py-2 text-right text-faint">
+                      {z.midLevel?.toFixed(2) ?? "—"}
+                    </td>
+                    <td className="tnum px-2 py-2 text-right text-dim">
+                      {z.stopLevel?.toFixed(2) ?? z.low.toFixed(2)}
+                    </td>
+                    <td
+                      className={`tnum px-2 py-2 text-right ${
+                        z.distancePct != null && Math.abs(z.distancePct) <= 2
+                          ? "text-warn"
+                          : "text-faint"
+                      }`}
+                    >
+                      {z.distancePct == null
+                        ? "—"
+                        : `${z.distancePct > 0 ? "+" : ""}${z.distancePct.toFixed(2)}%`}
+                    </td>
+                    <td className="px-2 py-2">
+                      {z.indicatorState ? (
+                        <Badge
+                          tone={z.indicatorState === "Fresh" ? "acc" : "neutral"}
+                          title="The indicator's own read. Mitigated means price has already been into it — not the same as broken."
+                        >
+                          {z.indicatorState}
+                        </Badge>
+                      ) : (
+                        <span className="text-faint">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-2">
                       <Badge tone={ZONE_TONE[z.status]}>
                         {z.status.replaceAll("_", " ")}
                       </Badge>
                     </td>
-                    <td className="px-2 py-2 text-xs text-faint">
-                      {z.confluence?.length
-                        ? `${z.confluence.length}× ${z.confluence.join(", ")}`
-                        : "—"}
-                    </td>
                     <td className="px-2 py-2 text-right text-xs text-faint">
-                      {ageLabel(z.drawnAt)}
+                      {ageLabel(z.lastSeenAt ?? z.drawnAt)}
                     </td>
                   </tr>
                 ))}

@@ -208,6 +208,31 @@ export const zones = pgTable(
     timeframe: text("timeframe").notNull(), // daily | weekly | 4h ...
     status: zoneStatusEnum("status").default("untested").notNull(),
     testCount: integer("test_count").default(0).notNull(),
+
+    /* --- the MTF supply/demand indicator's own columns ---------------
+     * Reading these off the indicator's table is far more precise than
+     * estimating box edges from candles, and it hands over the stop
+     * directly instead of making the grader derive one from structure. */
+
+    /** Proximal edge — where you enter. Top of a demand zone, bottom of
+     *  a supply zone. */
+    entryLevel: doublePrecision("entry_level"),
+    /** Midpoint of entry and stop. */
+    midLevel: doublePrecision("mid_level"),
+    /** Distal edge plus the indicator's buffer — where the zone is wrong.
+     *  This is a real stop, not a round number. */
+    stopLevel: doublePrecision("stop_level"),
+    /** Distance from price to the entry level, in %, as the indicator
+     *  reports it. Negative = price is below the zone. */
+    distancePct: doublePrecision("distance_pct"),
+    /** The indicator's own read: "Fresh" = never traded into,
+     *  "Mitigated" = price has already been in it. Kept alongside our
+     *  status because they answer different questions — mitigated is not
+     *  the same as broken. */
+    indicatorState: text("indicator_state"),
+    /** Last time this zone was seen on a chart, so stale ones are
+     *  visible as stale. */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     /** Independent things stacked at this price: weekly zone, daily zone,
      *  MA, prior breakdown shelf. Count them; the Method report asks
      *  whether confluence actually predicts anything. */

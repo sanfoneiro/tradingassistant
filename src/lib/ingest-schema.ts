@@ -66,17 +66,33 @@ export const accountSync = z.object({
 });
 
 export const zoneIn = z.object({
-  kind: z.literal("zone"),
-  symbol: z.string(),
-  direction: z.enum(["supply", "demand"]),
-  low: z.number(),
-  high: z.number(),
-  timeframe: z.string(),
-  confluence: z.array(z.string()).default([]),
-  status: z
-    .enum(["untested", "tested_held", "tested_broken", "expired"])
-    .default("untested"),
-  note: z.string().nullable().optional(),
+    kind: z.literal("zone"),
+    symbol: z.string(),
+    direction: z.enum(["supply", "demand"]),
+    /** Optional when entryLevel + stopLevel are given — the box is derived
+     *  from them, so the MTF table can be transcribed column-for-column
+     *  without doing arithmetic in the agent. */
+    low: z.number().optional(),
+    high: z.number().optional(),
+    timeframe: z.string(),
+
+    // --- straight off the indicator's table ---
+    /** Entry column: proximal edge. */
+    entryLevel: z.number().optional(),
+    /** 50% column. */
+    midLevel: z.number().optional(),
+    /** SL column: distal edge plus buffer. A real stop. */
+    stopLevel: z.number().optional(),
+    /** Dist % column, sign included. */
+    distancePct: z.number().nullable().optional(),
+    /** State column, verbatim: "Fresh" or "Mitigated". */
+    indicatorState: z.string().nullable().optional(),
+
+    confluence: z.array(z.string()).default([]),
+    status: z
+      .enum(["untested", "tested_held", "tested_broken", "expired"])
+      .default("untested"),
+    note: z.string().nullable().optional(),
   screenshotUrl: z.string().nullable().optional(),
 });
 
