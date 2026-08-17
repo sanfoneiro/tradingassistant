@@ -154,10 +154,27 @@ export const wishlistIn = z.object({
 });
 
 /**
- * The fast pass: every symbol looked at this run, whether or not it
- * survived. Recording the rejects is the point — it is what lets the next
- * run rotate to names it has not seen instead of re-reading the top of the
- * list forever.
+ * The weekly universe refresh: just the names on the saved screen. No
+ * charts, no analysis, no prices — a list.
+ *
+ * This is deliberately its own payload because reading names out of the
+ * screener DOM is reliable, while reading charts is not. Separating them
+ * means the list stays current even when charting is broken.
+ */
+export const universeIn = z.object({
+  kind: z.literal("universe"),
+  /** Which saved screen this came from, for the record. */
+  screen: z.string().default("EMA 200"),
+  symbols: z.array(z.string().min(1)),
+  /** Names no longer on the screen — dropped from the queue. */
+  removed: z.array(z.string()).default([]),
+});
+
+/**
+ * The fast pass: every symbol whose charts were actually READ this run,
+ * whether or not it survived. Recording the rejects is the point — it is
+ * what lets the next run rotate to names nobody has looked at instead of
+ * re-reading the top of the list forever.
  */
 export const screenerPassIn = z.object({
   kind: z.literal("screener_pass"),
@@ -198,6 +215,7 @@ export const ingestPayload = z.discriminatedUnion("kind", [
   suggestionIn,
   actionItemIn,
   wishlistIn,
+  universeIn,
   screenerPassIn,
   catalystIn,
   runIn,

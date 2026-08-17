@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accounts,
@@ -55,6 +55,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await handleActionItems(p));
       case "wishlist":
         return NextResponse.json(await handleWishlist(p));
+      case "universe":
+        return NextResponse.json(await handleUniverse(p));
       case "screener_pass":
         return NextResponse.json(await handleScreenerPass(p));
       case "catalysts":
@@ -485,6 +487,64 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
   return { ok: true, created, updated };
 }
 
+/**
+ * Weekly list refresh. Adds new names with analyzedAt left null so they go
+ * to the front of the analysis queue, and refreshes lastScreenedAt on ones
+ * already known — without touching analyzedAt, because appearing on the
+ * screen again is not the same as having been looked at.
+ */
+async function handleUniverse(p: Extract<P, { kind: "universe" }>) {
+  let added = 0;
+  let refreshed = 0;
+
+  for (const symbol of p.symbols) {
+    const [prev] = await db
+      .select()
+      .from(screenerCoverage)
+      .where(eq(screenerCoverage.symbol, symbol))
+      .limit(1);
+
+    if (prev) {
+      await db
+        .update(screenerCoverage)
+        .set({ lastScreenedAt: new Date() })
+        .where(eq(screenerCoverage.id, prev.id));
+      refreshed++;
+    } else {
+      await db.insert(screenerCoverage).values({
+        symbol,
+        analyzedAt: null,
+        note: `from ${p.screen}`,
+      });
+      added++;
+    }
+  }
+
+  let removed = 0;
+  for (const symbol of p.removed) {
+    const r = await db
+      .delete(screenerCoverage)
+      .where(eq(screenerCoverage.symbol, symbol))
+      .returning();
+    removed += r.length;
+  }
+
+  const queue = await db
+    .select()
+    .from(screenerCoverage)
+    .where(isNull(screenerCoverage.analyzedAt));
+
+  return {
+    ok: true,
+    screen: p.screen,
+    added,
+    refreshed,
+    removed,
+    universeSize: p.symbols.length,
+    awaitingAnalysis: queue.length,
+  };
+}
+
 async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
   let seen = 0;
   for (const s of p.symbols) {
@@ -498,7 +558,7 @@ async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
       await db
         .update(screenerCoverage)
         .set({
-          lastScreenedAt: new Date(),
+          analyzedAt: new Date(),
           distancePct: s.distancePct ?? null,
           nearZone: s.nearZone,
           trend: s.trend ?? null,
@@ -509,6 +569,7 @@ async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
     } else {
       await db.insert(screenerCoverage).values({
         symbol: s.symbol,
+        analyzedAt: new Date(),
         distancePct: s.distancePct ?? null,
         nearZone: s.nearZone,
         trend: s.trend ?? null,

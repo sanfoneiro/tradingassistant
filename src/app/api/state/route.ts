@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, and, gt } from "drizzle-orm";
+import { desc, eq, and, gt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accounts,
@@ -161,10 +161,15 @@ async function readState() {
       await db
         .select()
         .from(screenerCoverage)
-        .orderBy(screenerCoverage.lastScreenedAt)
+        .orderBy(
+          sql`${screenerCoverage.analyzedAt} ASC NULLS FIRST`,
+        )
     ).map((s) => ({
       symbol: s.symbol,
+      /** Last seen on the saved screen. */
       lastScreenedAt: s.lastScreenedAt,
+      /** Null = in the universe, charts never read. These come first. */
+      analyzedAt: s.analyzedAt,
       distancePct: s.distancePct,
       nearZone: s.nearZone,
       trend: s.trend,

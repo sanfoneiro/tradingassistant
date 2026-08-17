@@ -27,7 +27,7 @@ export default async function WatchlistPage() {
     [];
   const coverage =
     (await safe(() =>
-      db.select().from(screenerCoverage).orderBy(screenerCoverage.lastScreenedAt),
+      db.select().from(screenerCoverage).orderBy(screenerCoverage.analyzedAt),
     )) ?? [];
 
   const zoneById = new Map(allZones.map((z) => [z.id, z]));
@@ -187,7 +187,7 @@ export default async function WatchlistPage() {
         title="Screener coverage"
         right={
           <span className="text-xs text-faint">
-            oldest first — next run starts here
+            never-analysed first, then longest unseen
           </span>
         }
       >
@@ -202,7 +202,7 @@ export default async function WatchlistPage() {
             {coverage.map((c) => (
               <span
                 key={c.symbol}
-                title={`${c.trend ?? "trend unknown"} · ${
+                title={`${c.analyzedAt == null ? "never analysed" : c.trend ?? "trend unknown"} · ${
                   c.distancePct != null
                     ? `${Math.abs(c.distancePct).toFixed(1)}% from zone`
                     : "distance unknown"
@@ -210,7 +210,9 @@ export default async function WatchlistPage() {
                 className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
                   c.nearZone
                     ? "border-warn/40 bg-warn/5 text-warn"
-                    : "border-line text-faint"
+                    : c.analyzedAt == null
+                      ? "border-acc/30 text-acc/70"
+                      : "border-line text-faint"
                 }`}
               >
                 {c.symbol}

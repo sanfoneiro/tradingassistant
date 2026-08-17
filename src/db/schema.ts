@@ -257,9 +257,16 @@ export const screenerCoverage = pgTable(
   {
     id: serial("id").primaryKey(),
     symbol: text("symbol").notNull(),
+    /** When this name last appeared in the saved screen. Set by the weekly
+     *  universe refresh, which reads names only and never opens a chart. */
     lastScreenedAt: timestamp("last_screened_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    /** When its charts were actually READ. Null means it is in the universe
+     *  but nobody has looked at it yet — those go first in the queue.
+     *  Keeping this separate from lastScreenedAt is what lets one job
+     *  maintain the list and a different one work through it. */
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
     /** Distance to the nearest zone at that screening, in %. */
     distancePct: doublePrecision("distance_pct"),
     /** Did it survive the fast pass into full grading? */
