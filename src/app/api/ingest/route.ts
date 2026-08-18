@@ -283,7 +283,28 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
   };
 }
 
+/**
+ * Zones upsert on (symbol, timeframe, direction), so the timeframe string IS
+ * part of the primary key in practice. Two agents writing "daily" and "1D"
+ * for the same level produce two rows that never converge — which is exactly
+ * what happened on 2026-08-18 (26 zones, two conventions). Normalise here, at
+ * the only door into the table, rather than trusting every prompt to agree.
+ */
+function normalizeTimeframe(tf: string): string {
+  const t = tf.trim().toLowerCase();
+  const map: Record<string, string> = {
+    daily: "1D", d: "1D", "1d": "1D", "1 d": "1D",
+    weekly: "1W", w: "1W", "1w": "1W", "1 w": "1W",
+    monthly: "1M", m: "1M", "1m": "1M",
+    "4h": "4H", h4: "4H", "1h": "1H", h1: "1H",
+    "15m": "15M", "5m": "5M",
+  };
+  return map[t] ?? tf.trim().toUpperCase();
+}
+
 async function handleZone(p: Extract<P, { kind: "zone" }>) {
+  const timeframe = normalizeTimeframe(p.timeframe);
+
   // The MTF indicator reports entry (proximal) and SL (distal + buffer)
   // rather than a box. Derive the box so the agent can transcribe the
   // table column-for-column without doing arithmetic — arithmetic in a
@@ -326,7 +347,7 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
     .where(
       and(
         eq(zones.symbol, p.symbol),
-        eq(zones.timeframe, p.timeframe),
+        eq(zones.timeframe, timeframe),
         eq(zones.direction, p.direction),
       ),
     )
@@ -372,7 +393,7 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
       low,
       high,
       ...extra,
-      timeframe: p.timeframe,
+      timeframe,
       status: p.status,
       confluence: p.confluence,
       note: p.note ?? null,
