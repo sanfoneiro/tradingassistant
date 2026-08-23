@@ -21,6 +21,7 @@
     "db:fix-timeframes": "tsx --env-file=.env src/db/fix-timeframes.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.3.1",
     "postgres": "^3.4.9",
