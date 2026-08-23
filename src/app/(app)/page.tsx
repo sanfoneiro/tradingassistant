@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { desc, eq, and } from "drizzle-orm";
+import { desc, eq, and, isNotNull, asc } from "drizzle-orm";
 import { db } from "@/db";
-import { accounts, positions, actionItems, runs, trades } from "@/db/schema";
+import { accounts, positions, actionItems, runs, trades, wishlist } from "@/db/schema";
 import { Panel, Stat, Mark, Badge, Empty, RiskBar } from "@/components/ui";
 import { usd, pct, ageLabel, freshness, SOURCE_LABEL } from "@/lib/format";
 import { freeStopMove } from "@/lib/metrics";
+import { daysWaiting, TRIGGER_BAND_PCT } from "@/lib/funnel";
 import { safe, dbConfigured } from "@/lib/safe";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,16 @@ export default async function AccountPage() {
   );
   const toReview = (await safe(() =>
     db.select().from(trades).where(eq(trades.status, "pending_review")),
+  )) ?? [];
+
+  // Names that have arrived at their level. The wishlist knows; without this
+  // it never says so, which makes the whole stage decorative.
+  const arrived = (await safe(() =>
+    db
+      .select()
+      .from(wishlist)
+      .where(and(eq(wishlist.active, true), isNotNull(wishlist.triggeredAt)))
+      .orderBy(asc(wishlist.triggeredAt)),
   )) ?? [];
 
   if (account === null && open.length === 0) return <SetupNotice noData />;
@@ -85,6 +96,59 @@ export default async function AccountPage() {
               Review now →
             </Link>
           </div>
+        </div>
+      )}
+
+      {arrived.length > 0 && (
+        <div className="rounded-xl border border-acc/40 bg-acc/5 px-4 py-3">
+          <div className="mb-2 text-sm">
+            <b className="text-acc">
+              {arrived.length} name{arrived.length > 1 ? "s" : ""} at{" "}
+              {arrived.length > 1 ? "their" : "its"} trigger.
+            </b>{" "}
+            <span className="text-dim">
+              Price is within {TRIGGER_BAND_PCT}% of the level, so the numbers
+              are real now — grade {arrived.length > 1 ? "them" : "it"} or drop{" "}
+              {arrived.length > 1 ? "them" : "it"}.
+            </span>
+          </div>
+          <ul className="space-y-1.5">
+            {arrived.map((w) => {
+              const days = daysWaiting(w.triggeredAt);
+              return (
+                <li
+                  key={w.id}
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm"
+                >
+                  <span>
+                    <b>{w.symbol}</b>{" "}
+                    {w.side && <span className="text-faint">{w.side}</span>}{" "}
+                    <span className="text-dim">
+                      at <span className="tnum">{w.triggerLevel?.toFixed(2)}</span>
+                      {w.distancePct != null && (
+                        <span className="tnum">
+                          {" "}
+                          ({w.distancePct > 0 ? "+" : ""}
+                          {w.distancePct.toFixed(2)}%)
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="text-xs text-faint">
+                    {days === 0
+                      ? "arrived today"
+                      : days === 1
+                        ? "waiting 1 day"
+                        : `waiting ${days} days`}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-2 text-xs text-faint">
+            A name sitting at its level for days without a verdict is the same
+            broken loop as an action item nobody acts on.
+          </p>
         </div>
       )}
 

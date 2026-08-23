@@ -18,6 +18,7 @@ import {
 import { ingestPayload } from "@/lib/ingest-schema";
 import { checkIngestToken } from "@/lib/auth";
 import { positionRisk } from "@/lib/metrics";
+import { TRIGGER_BAND_PCT, triggerStamp } from "@/lib/funnel";
 
 export const dynamic = "force-dynamic";
 
@@ -471,13 +472,6 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
   return { ok: true, zoneId: z.id, created: true };
 }
 
-/**
- * How far from price an entry can sit and still be a suggestion rather than
- * a wish. The chart-zones skill already draws the line here: inside 2%, hand
- * it to the grader; 2–6% away, wishlist it with a trigger.
- */
-const SUGGESTION_MAX_DISTANCE_PCT = 2;
-
 async function handleSuggestion(p: Extract<P, { kind: "suggestion" }>) {
   /**
    * A suggestion carries entry, stop, target, R:R and a position size. Every
@@ -493,12 +487,12 @@ async function handleSuggestion(p: Extract<P, { kind: "suggestion" }>) {
   const distance =
     (Math.abs(p.entry - p.currentPrice) / p.currentPrice) * 100;
 
-  if (distance > SUGGESTION_MAX_DISTANCE_PCT) {
+  if (distance > TRIGGER_BAND_PCT) {
     return {
       ok: false,
       rejected: "too_far_from_price",
       distancePct: Number(distance.toFixed(2)),
-      maxPct: SUGGESTION_MAX_DISTANCE_PCT,
+      maxPct: TRIGGER_BAND_PCT,
       detail:
         `${p.symbol} entry ${p.entry} is ${distance.toFixed(2)}% from ${p.currentPrice}. ` +
         `Post a wishlist entry with triggerLevel ${p.entry} instead — it becomes ` +
@@ -632,6 +626,9 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
       triggerNote: w.triggerNote ?? null,
       triggerLevel: w.triggerLevel ?? null,
       distancePct: w.distancePct ?? null,
+      // Stamped here, at the only door into the table, so every writer agrees
+      // on when a name arrived rather than each agent deciding for itself.
+      triggeredAt: triggerStamp(w.distancePct, prev?.triggeredAt ?? null),
       priority: w.priority ?? 3,
       active: w.active ?? true,
       updatedAt: new Date(),

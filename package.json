@@ -15,6 +15,7 @@
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
     "zones:sweep": "tsx --env-file=.env src/db/sweep-zones.ts",
+    "db:retro-gate": "tsx --env-file=.env src/db/retro-gate-suggestions.ts",
     "db:repair-levels": "tsx --env-file=.env src/db/repair-planned-levels.ts",
     "db:verify-zones": "tsx --env-file=.env src/db/verify-zones.ts",
     "db:backfill-aug": "tsx --env-file=.env src/db/backfill-aug-2026.ts",
