@@ -120,6 +120,8 @@ export default async function TradeReview({
               }
             : null
         }
+        exitActual={trade.exitActual}
+        exitProvisional={trade.exitProvisional}
         exitReason={trade.exitReason}
         execution={trade.execution}
         emotion={trade.emotion}

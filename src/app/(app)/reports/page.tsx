@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, asc } from "drizzle-orm";
 import { db } from "@/db";
 import { trades, tags, tradeTags } from "@/db/schema";
 import { Panel, Empty, Badge } from "@/components/ui";
@@ -14,9 +14,16 @@ export default async function ReportsPage() {
   if (!dbConfigured())
     return <p className="py-12 text-center text-sm text-dim">Database not connected.</p>;
 
+  // Chronological, because max drawdown walks the cumulative curve in the
+  // order given — an unordered read makes that number arbitrary.
   const closed =
-    (await safe(() => db.select().from(trades).where(eq(trades.status, "closed")))) ??
-    [];
+    (await safe(() =>
+      db
+        .select()
+        .from(trades)
+        .where(eq(trades.status, "closed"))
+        .orderBy(asc(trades.closedAt)),
+    )) ?? [];
   const mistakeTags = (await safe(() => db.select().from(tags))) ?? [];
   const links = (await safe(() => db.select().from(tradeTags))) ?? [];
 

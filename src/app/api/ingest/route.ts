@@ -194,6 +194,9 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
       qty: pos.qty,
       entry: pos.entry,
       stop: pos.stop ?? null,
+      // Snapshot once, then never again. The live stop trails; this is the
+      // risk actually taken, and it is what R gets measured against.
+      initialStop: prev?.initialStop ?? pos.stop ?? null,
       target: pos.target ?? null,
       mark: pos.mark,
       markSource: pos.markSource,
@@ -232,7 +235,32 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
   const disappeared = current.filter(
     (c) => !incoming.has(`${c.symbol}:${c.side}`),
   );
-  for (const gone of disappeared) {
+
+  // A partial read looks exactly like a mass exit. Two or more positions
+  // vanishing at once is far more often a page that half-loaded than two
+  // simultaneous closes, and the cost of guessing wrong is destroyed trade
+  // records with invented exits. Update what was seen, close nothing, and
+  // say so loudly. `confirmClosures` is the deliberate override.
+  const closureLimit = 1;
+  const refusedClosures =
+    !p.confirmClosures && disappeared.length > closureLimit;
+
+  if (refusedClosures) {
+    await db
+      .update(runs)
+      .set({
+        status: "degraded",
+        degraded: true,
+        notes:
+          `refused to auto-close ${disappeared.length} positions ` +
+          `(${disappeared.map((d) => d.symbol).join(", ")}) — a partial ` +
+          `position list is indistinguishable from a mass exit. Re-send ` +
+          `with confirmClosures:true if they really did all close.`,
+      })
+      .where(eq(runs.id, run.id));
+  }
+
+  for (const gone of refusedClosures ? [] : disappeared) {
     await db
       .update(positions)
       .set({ isOpen: false, closedAt: new Date() })
@@ -244,9 +272,20 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
       status: "pending_review",
       entryPlanned: gone.entry,
       entryActual: gone.entry,
-      stopPlanned: gone.stop,
+      // The risk originally taken, not wherever the stop was trailed to.
+      stopPlanned: gone.initialStop ?? gone.stop,
+      stopFinal: gone.stop,
       targetPlanned: gone.target,
-      exitActual: gone.mark,
+      // A mark is not a fill. The review form prefills from
+      // exitProvisional and the human confirms the real price.
+      exitActual: null,
+      exitProvisional: gone.mark,
+      // Commission already charged. Without it every realised P/L is gross
+      // and will not tie out to the platform.
+      fees: gone.fee ?? 0,
+      // Excursions, captured live. Unrecoverable once the position is gone.
+      maePrice: gone.maeRunning,
+      mfePrice: gone.mfeRunning,
       qty: gone.qty,
       openedAt: gone.openedAt,
       closedAt: new Date(),
@@ -279,7 +318,15 @@ async function handleAccountSync(p: Extract<P, { kind: "account_sync" }>) {
     runId: run.id,
     positions: p.positions.length,
     marksWritten,
-    closedToReview: disappeared.length,
+    closedToReview: refusedClosures ? 0 : disappeared.length,
+    ...(refusedClosures
+      ? {
+          warning:
+            `refused to auto-close ${disappeared.length} positions — send ` +
+            `confirmClosures:true if this really was a mass exit`,
+          wouldHaveClosed: disappeared.map((d) => d.symbol),
+        }
+      : {}),
   };
 }
 
@@ -659,15 +706,20 @@ async function handleCatalysts(p: Extract<P, { kind: "catalysts" }>) {
 }
 
 async function handleRun(p: Extract<P, { kind: "run" }>) {
+  // "ok" and degraded:true is a contradiction, and the state route reports
+  // the two separately — so a run recorded that way shows a green status
+  // beside a degraded flag and nobody knows which to believe. Degraded wins.
+  const status = p.degraded ? "degraded" : p.status;
+
   const [r] = await db
     .insert(runs)
     .values({
       agent: p.agent,
-      status: p.status,
-      degraded: p.degraded,
+      status,
+      degraded: p.degraded || p.status !== "ok",
       notes: p.notes ?? null,
       finishedAt: new Date(),
     })
     .returning();
-  return { ok: true, runId: r.id };
+  return { ok: true, runId: r.id, status };
 }

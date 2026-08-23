@@ -10,6 +10,9 @@ export const dynamic = "force-dynamic";
 
 const body = z.object({
   tradeId: z.number().int(),
+  /** The confirmed fill, read off the platform. Required the first time a
+   *  trade is reviewed — the sync only ever records a provisional mark. */
+  exitActual: z.number().nullable().optional(),
   exitReason: z.enum([
     "target_hit",
     "stop_hit",
@@ -55,15 +58,33 @@ export async function POST(req: NextRequest) {
   const [t] = await db.select().from(trades).where(eq(trades.id, b.tradeId));
   if (!t) return NextResponse.json({ error: "no such trade" }, { status: 404 });
 
+  // The real fill. Until it is supplied the trade cannot be priced, so a
+  // provisional mark is never silently promoted into one.
+  const exitActual = b.exitActual ?? t.exitActual;
+  if (exitActual == null)
+    return NextResponse.json(
+      {
+        error: "exitActual required",
+        detail:
+          "this trade has no confirmed exit price — supply the fill from the platform",
+        provisional: t.exitProvisional,
+      },
+      { status: 422 },
+    );
+
   const d = computeDerived({
     side: t.side,
     entryPlanned: t.entryPlanned,
     stopPlanned: t.stopPlanned,
     targetPlanned: t.targetPlanned,
     entryActual: t.entryActual,
-    exitActual: t.exitActual,
+    exitActual,
     qty: t.qty,
     fees: t.fees,
+    // Captured while the trade was open; this is the only place they can
+    // become maeR / mfeR.
+    maePrice: t.maePrice,
+    mfePrice: t.mfePrice,
     openedAt: t.openedAt,
     closedAt: t.closedAt,
   });
@@ -72,6 +93,7 @@ export async function POST(req: NextRequest) {
     .update(trades)
     .set({
       status: "closed",
+      exitActual,
       exitReason: b.exitReason,
       execution: b.execution,
       emotion: b.emotion,
@@ -82,6 +104,8 @@ export async function POST(req: NextRequest) {
       rrActual: d.rrActual ?? t.rrActual,
       slippageEntryR: d.slippageEntryR,
       slippageExitR: d.slippageExitR,
+      maeR: d.maeR,
+      mfeR: d.mfeR,
       efficiency: d.efficiency,
       holdDays: d.holdDays,
       dayOfWeek: d.dayOfWeek,

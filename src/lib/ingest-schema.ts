@@ -62,6 +62,12 @@ export const accountSync = z.object({
   /** True when the agent could not reach the platform — machine asleep,
    *  Chrome not logged in, session expired. Says so loudly. */
   degraded: z.boolean().default(false),
+  /** Positions missing from `positions` are treated as closed. Because a
+   *  half-loaded page is indistinguishable from a mass exit, the server
+   *  refuses to auto-close more than one position at a time unless this is
+   *  explicitly set. Only send it when you have actually verified the
+   *  platform shows a flat book. */
+  confirmClosures: z.boolean().default(false),
   notes: z.string().nullable().optional(),
 });
 

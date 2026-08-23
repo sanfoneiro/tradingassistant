@@ -145,6 +145,13 @@ export const positions = pgTable(
     markSource: markSourceEnum("mark_source"),
     markAt: timestamp("mark_at", { withTimezone: true }),
 
+    /** The stop as it stood the first time this position was seen, never
+     *  overwritten. `stop` trails; this does not. R multiple must be
+     *  measured against the risk originally taken — using the trailed stop
+     *  makes a position moved to breakeven divide by ~zero and report an
+     *  absurd R, which then poisons every cross-trade comparison. */
+    initialStop: doublePrecision("initial_stop"),
+
     /** Commission the broker has already charged, as a positive number.
      *  Without it the app's P/L is gross and never ties out to the
      *  platform — which is the one thing this app must not do. */
@@ -375,8 +382,20 @@ export const trades = pgTable(
 
     // --- actual ---
     entryActual: doublePrecision("entry_actual"),
+    /** The real fill. Stays NULL until a human confirms it — a mark is not
+     *  a fill, and recording one as the other is the same failure as acting
+     *  on an unverified price. */
     exitActual: doublePrecision("exit_actual"),
+    /** Last mark seen before the position vanished, kept only to prefill the
+     *  review form. Never used in arithmetic. */
+    exitProvisional: doublePrecision("exit_provisional"),
     stopFinal: doublePrecision("stop_final"),
+
+    /** Extreme prices reached while open, carried over from the position's
+     *  running water marks at close. These cannot be reconstructed after the
+     *  fact — capture or lose. `computeDerived` turns them into maeR/mfeR. */
+    maePrice: doublePrecision("mae_price"),
+    mfePrice: doublePrecision("mfe_price"),
     qty: doublePrecision("qty"),
     fees: doublePrecision("fees").default(0),
     openedAt: timestamp("opened_at", { withTimezone: true }),

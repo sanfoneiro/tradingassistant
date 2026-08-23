@@ -247,10 +247,16 @@ export function stats(rows: { plUsd: number | null; rMultiple: number | null }[]
     avgWin,
     avgLoss,
     avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
-    expectancy:
-      winRate != null && avgWin != null && avgLoss != null
-        ? (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss
-        : null,
+    /**
+     * Per-trade edge in dollars. Both rates are measured over closed trades
+     * directly: a scratch is neither a win nor a loss, and `1 − winRate`
+     * silently counts it as one — which overstates the downside and can
+     * bury a real edge. A book with no wins (or no losses) still has an
+     * expectancy; only an empty book has none.
+     */
+    expectancy: n
+      ? (wins.length / n) * (avgWin ?? 0) - (losses.length / n) * (avgLoss ?? 0)
+      : null,
     maxDrawdown,
   };
 }

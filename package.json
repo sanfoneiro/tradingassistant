@@ -7,10 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
+    "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
     "db:fix-timeframes": "tsx --env-file=.env src/db/fix-timeframes.ts"
   },
   "dependencies": {
@@ -30,6 +33,7 @@
     "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.11"
   }
 }

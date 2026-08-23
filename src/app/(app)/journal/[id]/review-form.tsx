@@ -38,6 +38,8 @@ export default function ReviewForm({
   mistakes,
   applied,
   existing,
+  exitActual,
+  exitProvisional,
   exitReason,
   execution,
   emotion,
@@ -53,11 +55,16 @@ export default function ReviewForm({
     playbookEntry: string;
     playbookExit: string;
   } | null;
+  exitActual: number | null;
+  exitProvisional: number | null;
   exitReason: string | null;
   execution: string | null;
   emotion: string | null;
 }) {
   const router = useRouter();
+  const [fill, setFill] = useState(
+    exitActual != null ? String(exitActual) : "",
+  );
   const [exit, setExit] = useState(exitReason ?? "");
   const [exec, setExec] = useState(execution ?? "");
   const [mood, setMood] = useState(emotion ?? "");
@@ -71,7 +78,10 @@ export default function ReviewForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const complete = exit && exec && worked.trim() && failed.trim() && lesson.trim();
+  const fillNum = Number(fill);
+  const fillOk = fill.trim() !== "" && Number.isFinite(fillNum) && fillNum > 0;
+  const complete =
+    fillOk && exit && exec && worked.trim() && failed.trim() && lesson.trim();
 
   async function save() {
     setSaving(true);
@@ -81,6 +91,7 @@ export default function ReviewForm({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         tradeId,
+        exitActual: fillNum,
         exitReason: exit,
         execution: exec,
         emotion: mood || null,
@@ -106,7 +117,7 @@ export default function ReviewForm({
     <section className="rounded-xl border border-line bg-panel">
       <header className="border-b border-line px-4 py-3">
         <h2 className="text-sm font-semibold tracking-wide text-dim uppercase">
-          Review — six fields
+          Review — seven fields
         </h2>
         <p className="mt-1 text-xs text-faint">
           Under a minute. Everything else is either captured automatically or
@@ -115,21 +126,50 @@ export default function ReviewForm({
       </header>
 
       <div className="space-y-6 p-4">
+        <div>
+          <Label>1 · Exit fill — read it off the platform</Label>
+          <input
+            value={fill}
+            onChange={(e) => setFill(e.target.value)}
+            inputMode="decimal"
+            placeholder={
+              exitProvisional != null
+                ? `last mark was ${exitProvisional.toFixed(2)}`
+                : "the price you actually got"
+            }
+            className="tnum w-40 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-acc/60"
+          />
+          {exitProvisional != null && (
+            <button
+              type="button"
+              onClick={() => setFill(String(exitProvisional))}
+              className="ml-2 text-xs text-acc underline"
+            >
+              use {exitProvisional.toFixed(2)}
+            </button>
+          )}
+          <p className="mt-1.5 text-xs text-faint">
+            {exitProvisional != null
+              ? "The sync only saw the last mark before the position vanished — that is not a fill. Confirm or correct it."
+              : "No mark was captured. Every number below is computed from this one."}
+          </p>
+        </div>
+
         <Choice
-          label="1 · Why did it end?"
+          label="2 · Why did it end?"
           options={EXIT_REASONS as readonly string[]}
           value={exit}
           onChange={setExit}
         />
         <Choice
-          label="2 · Execution"
+          label="3 · Execution"
           options={EXECUTION as readonly string[]}
           value={exec}
           onChange={setExec}
         />
 
         <div>
-          <Label>3 · Mistakes — none is a valid answer</Label>
+          <Label>4 · Mistakes — none is a valid answer</Label>
           <div className="flex flex-wrap gap-2">
             {mistakes.map((m) => {
               const on = picked.includes(m.id);
@@ -157,20 +197,20 @@ export default function ReviewForm({
         </div>
 
         <Text
-          label="4 · What worked"
+          label="5 · What worked"
           value={worked}
           onChange={setWorked}
           placeholder="One line."
         />
         <Text
-          label="5 · What failed"
+          label="6 · What failed"
           value={failed}
           onChange={setFailed}
           placeholder="One line."
         />
         <div>
           <Text
-            label="6 · The lesson"
+            label="7 · The lesson"
             value={lesson}
             onChange={setLesson}
             placeholder="One line. Specific enough to act on next time."
@@ -225,7 +265,7 @@ export default function ReviewForm({
           </button>
           {!complete && (
             <span className="text-xs text-faint">
-              Fields 1, 2, 4, 5 and 6 are required.
+              Fields 1, 2, 3, 5, 6 and 7 are required.
             </span>
           )}
         </div>
