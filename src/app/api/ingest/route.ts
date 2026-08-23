@@ -471,7 +471,41 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
   return { ok: true, zoneId: z.id, created: true };
 }
 
+/**
+ * How far from price an entry can sit and still be a suggestion rather than
+ * a wish. The chart-zones skill already draws the line here: inside 2%, hand
+ * it to the grader; 2–6% away, wishlist it with a trigger.
+ */
+const SUGGESTION_MAX_DISTANCE_PCT = 2;
+
 async function handleSuggestion(p: Extract<P, { kind: "suggestion" }>) {
+  /**
+   * A suggestion carries entry, stop, target, R:R and a position size. Every
+   * one of those is hypothetical until price is actually at the zone — and
+   * the Ideas page files suggestions under "Actionable — every gate passed",
+   * which is a lie about a name still 5% away.
+   *
+   * The stages are not interchangeable. A zone is a fact about the chart. A
+   * wishlist entry is a zone worth waiting for, with a trigger and no R:R. A
+   * suggestion is what exists once price has arrived and the numbers are
+   * real. Refusing here is what keeps them distinct, since nothing else can.
+   */
+  const distance =
+    (Math.abs(p.entry - p.currentPrice) / p.currentPrice) * 100;
+
+  if (distance > SUGGESTION_MAX_DISTANCE_PCT) {
+    return {
+      ok: false,
+      rejected: "too_far_from_price",
+      distancePct: Number(distance.toFixed(2)),
+      maxPct: SUGGESTION_MAX_DISTANCE_PCT,
+      detail:
+        `${p.symbol} entry ${p.entry} is ${distance.toFixed(2)}% from ${p.currentPrice}. ` +
+        `Post a wishlist entry with triggerLevel ${p.entry} instead — it becomes ` +
+        `a suggestion when price arrives and the R:R is real.`,
+    };
+  }
+
   const [s] = await db
     .insert(suggestions)
     .values({

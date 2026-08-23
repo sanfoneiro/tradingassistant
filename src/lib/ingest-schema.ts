@@ -127,6 +127,12 @@ export const suggestionIn = z.object({
   stop: z.number(),
   target: z.number(),
   rr: z.number(),
+  /** Where price actually is, at the moment of grading. Required, because
+   *  entry/stop/target/rr only mean anything if price is AT the zone — five
+   *  percent away they are a hypothesis, and the server has no other way to
+   *  tell the two apart. A name that is not there yet belongs on the
+   *  wishlist. */
+  currentPrice: z.number().positive(),
   sizeUsd: z.number().nullable().optional(),
   shares: z.number().nullable().optional(),
   gatesPassed: z.array(z.string()).default([]),

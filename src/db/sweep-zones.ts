@@ -249,6 +249,17 @@ async function main() {
     note: string;
   }[] = [];
 
+  const watch: {
+    symbol: string;
+    side: "long" | "short";
+    zoneId: number;
+    triggerLevel: number;
+    distancePct: number;
+    triggerNote: string;
+    priority: number;
+    active: boolean;
+  }[] = [];
+
   let zonesWritten = 0;
   const failed: { symbol: string; error: string }[] = [];
 
@@ -296,16 +307,55 @@ async function main() {
       ];
 
       let nearest: number | null = null;
+      let closest: { zoneId: number; zone: Zone; tf: "1D" | "1W" } | null = null;
+
       for (const { tf, zones } of perTf) {
         for (const z of zones) {
           const d = distancePct(z.entry, price);
-          if (nearest === null || Math.abs(d) < Math.abs(nearest)) nearest = d;
-          await post(zonePayload(symbol, tf, z, price));
+          const res = await post(zonePayload(symbol, tf, z, price));
           zonesWritten++;
+
+          // Keep the id of whichever zone price is nearest — that is the one
+          // the wishlist watches, and the wishlist row has to point at a real
+          // row rather than a level copied out of one.
+          if (nearest === null || Math.abs(d) < Math.abs(nearest)) {
+            nearest = d;
+            if (typeof res?.zoneId === "number") {
+              closest = { zoneId: res.zoneId, zone: z, tf };
+            }
+          }
         }
       }
 
       const near = nearest !== null && Math.abs(nearest) <= NEAR_ZONE_PCT;
+
+      /**
+       * The wishlist is the stage between "there is a level here" and "this
+       * is a trade". It carries a trigger and no R:R, because the R:R is not
+       * knowable until price arrives — which is exactly why the ingest route
+       * refuses a suggestion this far out.
+       *
+       * Every swept symbol produces a row, active or not: a name that has
+       * drifted away needs retiring as much as a new one needs adding, and
+       * only a sweep that saw the symbol can say which.
+       */
+      if (closest) {
+        watch.push({
+          symbol,
+          side: closest.zone.direction === "demand" ? "long" : "short",
+          zoneId: closest.zoneId,
+          triggerLevel: round(closest.zone.entry),
+          distancePct: round(nearest!),
+          triggerNote:
+            `price reaches the ${closest.tf} ${closest.zone.direction} edge at ` +
+            `${round(closest.zone.entry)} (${closest.zone.mitigated ? "mitigated" : "fresh"}, ` +
+            `stop ${round(closest.zone.sl)})`,
+          // Nearest first, so the watchlist sorts by "closest to going live".
+          priority: Math.abs(nearest!) <= 1 ? 1 : Math.abs(nearest!) <= 3 ? 2 : 3,
+          active: near,
+        });
+      }
+
       pass.push({
         symbol,
         distancePct: nearest === null ? null : round(nearest),
@@ -329,6 +379,7 @@ async function main() {
   }
 
   if (pass.length) await post({ kind: "screener_pass", symbols: pass });
+  if (watch.length) await post({ kind: "wishlist", items: watch });
 
   const nearCount = pass.filter((p) => p.nearZone).length;
   const degraded = failed.length > queue.length / 4;
@@ -348,7 +399,9 @@ async function main() {
 
   console.log(
     `\n${pass.length}/${queue.length} swept · ${zonesWritten} zones · ` +
-      `${nearCount} within ${NEAR_ZONE_PCT}% of a level`,
+      `${nearCount} within ${NEAR_ZONE_PCT}% of a level · ` +
+      `${watch.filter((w) => w.active).length} watching, ` +
+      `${watch.filter((w) => !w.active).length} retired`,
   );
   if (failed.length) {
     console.log(`${failed.length} failed: ${failed.map((f) => f.symbol).join(", ")}`);
