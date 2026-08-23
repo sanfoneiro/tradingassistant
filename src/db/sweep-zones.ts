@@ -31,7 +31,15 @@ import {
  * everything else is recorded as coverage and left alone.
  */
 
-const APP_URL = process.env.APP_URL ?? "https://project-alr3f.vercel.app";
+/**
+ * `??` is the wrong operator for environment variables. An unset GitHub
+ * Actions input arrives as an EMPTY STRING, not undefined, so `??` keeps it
+ * and every request goes to a relative URL with no host — which surfaces as
+ * "Failed to parse URL from /api/state" rather than anything about
+ * configuration. `||` treats blank as absent, which is what was meant.
+ */
+const APP_URL =
+  process.env.APP_URL?.trim() || "https://project-alr3f.vercel.app";
 
 /**
  * Token resolution, in the order that actually works.
@@ -123,6 +131,23 @@ async function main() {
     process.exit(1);
   }
   console.log(`auth: ${TOKEN_SOURCE} (${TOKEN.length} chars)`);
+
+  // Fail on the configuration rather than on the first fetch, where a bad
+  // base URL reads as a network fault.
+  try {
+    new URL(APP_URL);
+  } catch {
+    console.error(`APP_URL is not a valid absolute URL: "${APP_URL}"`);
+    process.exit(1);
+  }
+
+  // Checked here rather than discovered inside the loop, where a missing key
+  // produces one identical failure per symbol and buries the cause 114 lines
+  // deep.
+  if (!process.env.MASSIVE_API_KEY?.trim()) {
+    console.error("MASSIVE_API_KEY is not set — nothing could be fetched.");
+    process.exit(1);
+  }
 
   const limit = Number(process.argv[2]) || Infinity;
 
@@ -250,6 +275,18 @@ async function main() {
         .map((p) => `${p.symbol} ${p.distancePct}%`)
         .join(", ")}`,
     );
+  }
+
+  // A sweep that wrote nothing is a failed sweep, and CI must show it as
+  // one. Reporting a degraded run into the database and then exiting green
+  // is the same silence this project keeps trying to remove — the run record
+  // is for the app, the exit code is for the human watching Actions.
+  if (degraded || zonesWritten === 0) {
+    console.error(
+      `\nFAILED: ${failed.length}/${queue.length} symbols errored, ` +
+        `${zonesWritten} zones written.`,
+    );
+    process.exit(1);
   }
 }
 
