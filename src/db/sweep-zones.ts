@@ -70,6 +70,43 @@ const { token: TOKEN, source: TOKEN_SOURCE } = resolveToken();
 /** Inside this band a name is worth the grader's attention. */
 const NEAR_ZONE_PCT = 6;
 
+/**
+ * What time is it on the exchange? Asked of the New York clock directly
+ * rather than derived from UTC, because Israel and the US change DST on
+ * different dates — for a couple of weeks each spring and autumn the offset
+ * between them is not what it is the rest of the year. A cron fixed in UTC
+ * drifts an hour across those windows; "what time is it in New York" never
+ * does.
+ */
+function newYorkNow(): { minutes: number; weekday: number; label: string } {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(now);
+
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const hh = Number(get("hour")) % 24;
+  const mm = Number(get("minute"));
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  return {
+    minutes: hh * 60 + mm,
+    weekday: days.indexOf(get("weekday")),
+    label: `${get("weekday")} ${String(hh).padStart(2, "0")}:${get("minute")} ET`,
+  };
+}
+
+const OPEN = 9 * 60 + 30; // 09:30 ET
+
+/** The settled part of the first hour: past the opening auction and the
+ *  fifteen minutes of noise after it, still early enough to act on. */
+const AFTER_OPEN_FROM = OPEN + 15;
+const AFTER_OPEN_TO = OPEN + 90;
+
 type State = {
   screenerCoverage: {
     symbol: string;
@@ -152,9 +189,36 @@ async function main() {
   // A numeric argument caps the batch; anything else is a list of symbols to
   // sweep directly. Naming symbols is how you re-check one name without
   // waiting for the rotation to reach it.
-  const args = process.argv.slice(2).filter(Boolean);
+  const argv = process.argv.slice(2).filter(Boolean);
+  const afterOpen = argv.includes("--after-open");
+  const args = argv.filter((a) => !a.startsWith("--"));
   const explicit = args.filter((a) => !/^\d+$/.test(a)).map((a) => a.toUpperCase());
   const limit = Number(args.find((a) => /^\d+$/.test(a))) || Infinity;
+
+  /**
+   * Two UTC crons cover the intraday slot so that one of them lands in the
+   * window whichever side of a DST change we are on. This is what stops the
+   * other one from running: whichever fires at the wrong local time exits
+   * quietly, and exactly one sweep happens.
+   */
+  if (afterOpen) {
+    const et = newYorkNow();
+    const inWindow =
+      et.weekday >= 1 &&
+      et.weekday <= 5 &&
+      et.minutes >= AFTER_OPEN_FROM &&
+      et.minutes <= AFTER_OPEN_TO;
+    if (!inWindow) {
+      console.log(
+        `${et.label} — outside the ${Math.floor(AFTER_OPEN_FROM / 60)}:` +
+          `${String(AFTER_OPEN_FROM % 60).padStart(2, "0")}–` +
+          `${Math.floor(AFTER_OPEN_TO / 60)}:${String(AFTER_OPEN_TO % 60).padStart(2, "0")} ET ` +
+          `window. This is the duplicate cron for the other DST offset; skipping.`,
+      );
+      return;
+    }
+    console.log(`${et.label} — inside the post-open window.`);
+  }
 
   console.log(`reading the queue from ${APP_URL}…`);
   const state: State = await api("/api/state");
@@ -210,12 +274,25 @@ async function main() {
         continue;
       }
 
+      /**
+       * Mid-session, the last daily bar is still forming. Levels must come
+       * from completed candles only — an intraday dip through a zone's
+       * distal edge would otherwise delete a zone that closes back inside it,
+       * and the deletion is not reversible on the next run because the zone
+       * simply stops being produced.
+       *
+       * So the intraday sweep recomputes DISTANCES against a live price, not
+       * the levels themselves. That is the honest division: the zone is a
+       * fact about closed candles, where price sits relative to it is a fact
+       * about now.
+       */
       const price = daily.at(-1)!.c;
-      const { trend, ma } = classifyTrend(daily);
+      const settled = afterOpen ? daily.slice(0, -1) : daily;
+      const { trend, ma } = classifyTrend(settled);
 
       const perTf: { tf: "1D" | "1W"; zones: Zone[] }[] = [
-        { tf: "1D", zones: computeZones(daily) },
-        { tf: "1W", zones: computeZones(toWeekly(daily)) },
+        { tf: "1D", zones: computeZones(settled) },
+        { tf: "1W", zones: computeZones(toWeekly(settled)) },
       ];
 
       let nearest: number | null = null;

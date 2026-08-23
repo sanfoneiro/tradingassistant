@@ -19,9 +19,19 @@ name: Zone sweep
 
 on:
   schedule:
-    # 22:10 UTC on weekdays — comfortably after the US close in both EDT
-    # and EST, so the last daily bar is final rather than forming.
+    # After the close: 22:10 UTC on weekdays, comfortably past 16:00 ET in
+    # both EDT and EST, so the last daily bar is final rather than forming.
+    # This is the run that establishes the levels.
     - cron: "10 22 * * 1-5"
+
+    # After the open: ~09:45 ET, once the first fifteen minutes of noise are
+    # out of the way. TWO entries because Israel and the US change DST on
+    # different dates — 13:45 UTC is 09:45 ET in EDT, 14:45 UTC is 09:45 ET
+    # in EST, and for a couple of weeks each spring and autumn the offsets
+    # do not line up. Both fire; --after-open checks the NEW YORK clock and
+    # the one outside the window exits quietly, so exactly one sweep runs.
+    - cron: "45 13 * * 1-5"
+    - cron: "45 14 * * 1-5"
   workflow_dispatch:
     inputs:
       limit:
@@ -67,4 +77,13 @@ jobs:
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
           APP_URL: ${{ vars.APP_URL }}
-        run: npx tsx src/db/sweep-zones.ts ${{ inputs.limit }}
+        # The 22:10 run recomputes levels from completed candles. The
+        # intraday runs pass --after-open, which refreshes distances against
+        # a live price while leaving the levels alone — a zone is a fact
+        # about closed candles.
+        # Only the two intraday crons pass --after-open. The evening run and
+        # any manual dispatch leave it off, so a hand-triggered sweep is never
+        # silently skipped by the session guard.
+        run: >-
+          npx tsx src/db/sweep-zones.ts ${{ inputs.limit }}
+          ${{ (github.event.schedule == '45 13 * * 1-5' || github.event.schedule == '45 14 * * 1-5') && '--after-open' || '' }}
