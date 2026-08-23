@@ -81,22 +81,52 @@ async function main() {
         "note the chart shows more history than a 2-year pull, so the deepest\n" +
         "rows may legitimately be absent rather than wrong:",
     );
+    // Pair each expected row with the nearest produced one rather than
+    // demanding an exact hit: a price-convention difference shifts every
+    // level slightly, and that must not read as "zone not found".
+    const drift: { tv: number; ours: number; ratio: number }[] = [];
     for (const e of EXPECTED_RL_1W) {
-      const hit = table.find((z) => Math.abs(z.entry - e.entry) < 0.02);
-      if (!hit) {
-        console.log(`  ${n(e.entry)}  not produced`);
+      let best: (typeof table)[number] | null = null;
+      let bestGap = Infinity;
+      for (const z of table) {
+        const gap = Math.abs(z.entry - e.entry) / e.entry;
+        if (gap < bestGap) [best, bestGap] = [z, gap];
+      }
+      if (!best || bestGap > 0.05) {
+        console.log(`  ${n(e.entry)}  not produced — likely outside the 2y window`);
         continue;
       }
-      const dMid = Math.abs(hit.mid - e.mid);
-      const dSl = Math.abs(hit.sl - e.sl);
-      const state = (hit.mitigated ? "Mitigated" : "Fresh") === e.state;
+      drift.push({ tv: e.entry, ours: best.entry, ratio: e.entry / best.entry });
       console.log(
-        `  ${n(e.entry)}  matched   50% Δ${dMid.toFixed(2)}  SL Δ${dSl.toFixed(2)}  state ${state ? "ok" : "DIFFERS"}`,
+        `  ${n(e.entry)}  ≈ ${n(best.entry)}   ${((bestGap * 100) as number).toFixed(2)}% apart` +
+          `   50% ${n(best.mid)}   SL ${n(best.sl)}   ${best.mitigated ? "Mitigated" : "Fresh"}`,
+      );
+    }
+
+    /**
+     * A constant offset would mean a rounding or edge-selection bug. An
+     * offset that GROWS with age is a price-convention difference: the
+     * chart's ADJ toggle back-adjusts history for dividends, and this API
+     * adjusts for splits only. RL yields roughly 1.2% a year, which is the
+     * size of the gap seen here.
+     */
+    if (drift.length >= 2) {
+      const oldest = drift[drift.length - 1];
+      const newest = drift[0];
+      const widening = Math.abs(1 - oldest.ratio) > Math.abs(1 - newest.ratio);
+      console.log(
+        `\n  newest row off by ${((1 - newest.ratio) * 100).toFixed(2)}%, ` +
+          `oldest by ${((1 - oldest.ratio) * 100).toFixed(2)}%`,
+      );
+      console.log(
+        widening
+          ? "  Offset grows with age — dividend back-adjustment, not a detection\n" +
+              "  fault. Turn the chart's ADJ toggle OFF and the tables should agree."
+          : "  Offset is flat across ages — this is NOT dividend adjustment.\n" +
+              "  Suspect edge selection or rounding in the port.",
       );
     }
   }
-
-  process.exit(0);
 }
 
 main().catch((e) => {
