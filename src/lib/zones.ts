@@ -193,6 +193,58 @@ export function zoneTable(zones: Zone[], price: number, rows = 8): Zone[] {
 }
 
 /**
+ * Exponential moving average of closes, aligned to `bars`. Entries before
+ * the average has enough data to mean anything are null rather than a
+ * short-window approximation — a 200 EMA computed off 40 bars is a
+ * different statistic wearing the same name.
+ */
+export function ema(bars: Bar[], period: number): (number | null)[] {
+  const k = 2 / (period + 1);
+  const out: (number | null)[] = [];
+  let prev: number | null = null;
+
+  for (let i = 0; i < bars.length; i++) {
+    const c = bars[i].c;
+    prev = prev === null ? c : c * k + prev * (1 - k);
+    out.push(i + 1 >= period ? prev : null);
+  }
+  return out;
+}
+
+export type Trend = "uptrend" | "downtrend" | "contested";
+
+/**
+ * The trend half of the quadrant model. Price above a rising average is an
+ * uptrend; below a falling one is a downtrend. When the two disagree there
+ * is no trend to trade with — which is exactly what the schema's
+ * `contested` means, and why it is a distinct answer rather than a coin
+ * flip between the other two.
+ *
+ * `lookback` is how far back the slope is measured, in bars.
+ */
+export function classifyTrend(
+  bars: Bar[],
+  period = 200,
+  lookback = 20,
+): { trend: Trend; ma: number | null } {
+  const line = ema(bars, period);
+  const ma = line.at(-1) ?? null;
+  const past = line.at(-1 - lookback) ?? null;
+  const price = bars.at(-1)?.c;
+
+  if (ma === null || past === null || price === undefined) {
+    return { trend: "contested", ma };
+  }
+
+  const above = price > ma;
+  const rising = ma > past;
+
+  if (above && rising) return { trend: "uptrend", ma };
+  if (!above && !rising) return { trend: "downtrend", ma };
+  return { trend: "contested", ma };
+}
+
+/**
  * Roll daily bars into weekly ones, so a single daily pull covers both
  * timeframes. Weeks start Monday; a partial trailing week is kept, matching
  * a live chart's forming candle.

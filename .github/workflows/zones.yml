@@ -1,0 +1,63 @@
+name: Zone sweep
+
+# Runs the universe sweep on a schedule, outside Vercel and outside the
+# laptop. This is the job that used to be a scheduled browser agent — the
+# one that failed 10 of its 12 runs.
+#
+# It lives here rather than in vercel.json for two reasons: Hobby crons fire
+# at most once a day with hour-level precision, and no serverless function
+# survives the ~23 minutes that 114 symbols take at five requests a minute.
+# A GitHub Action has hours, costs nothing on a public repo, and the
+# schedule is reviewable in a diff.
+#
+# Required repository secrets — Settings → Secrets and variables → Actions:
+#   MASSIVE_API_KEY   market data key (massive.com/dashboard/keys)
+#   INGEST_TOKEN      the same bearer token the app expects
+#
+# Optional repository variable:
+#   APP_URL           defaults to the production deployment
+
+on:
+  schedule:
+    # 22:10 UTC on weekdays — comfortably after the US close in both EDT
+    # and EST, so the last daily bar is final rather than forming.
+    - cron: "10 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many symbols to sweep (blank = the whole queue)"
+        required: false
+        type: string
+
+concurrency:
+  # A sweep takes ~23 minutes. Two at once would double-post zones and
+  # burn the rate limit against itself.
+  group: zone-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # The engine is the whole point, so a broken port must stop the run
+      # before it writes anything.
+      - name: Test the zone engine
+        run: npx vitest run src/lib/zones.test.ts
+
+      - name: Sweep
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: npx tsx src/db/sweep-zones.ts ${{ inputs.limit }}
