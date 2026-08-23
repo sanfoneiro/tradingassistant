@@ -17,15 +17,25 @@ import { computeZones, toWeekly, zoneTable, distancePct } from "../lib/zones";
  * two should line up column for column.
  */
 
+/**
+ * RL 1W as the indicator reported it on 2026-08-23 with **ADJ off**, price
+ * 372.59. Unadjusted is the convention to compare against: this API adjusts
+ * for splits only, and a zone is a record of where real orders rested, so
+ * back-adjusting those levels for dividends moves them away from the prices
+ * that actually mattered.
+ *
+ * The first four are inside a two-year pull and match exactly. The last four
+ * predate it — 63% or more below price, so nothing that would ever be traded.
+ */
 const EXPECTED_RL_1W = [
-  { entry: 354.13, mid: 339.47, sl: 324.8, dist: -4.95, state: "Mitigated" },
-  { entry: 323.34, mid: 320.84, sl: 318.35, dist: -13.22, state: "Mitigated" },
-  { entry: 193.82, mid: 192.22, sl: 190.62, dist: -47.98, state: "Mitigated" },
-  { entry: 190.62, mid: 187.82, sl: 185.02, dist: -48.84, state: "Mitigated" },
-  { entry: 129.06, mid: 125.9, sl: 122.74, dist: -65.36, state: "Fresh" },
-  { entry: 104.4, mid: 101.16, sl: 97.93, dist: -71.98, state: "Mitigated" },
-  { entry: 97.93, mid: 96.16, sl: 94.39, dist: -73.72, state: "Mitigated" },
-  { entry: 76.53, mid: 73.1, sl: 69.66, dist: -79.46, state: "Fresh" },
+  { entry: 355.0, mid: 340.29, sl: 325.59, dist: -4.72, state: "Mitigated" },
+  { entry: 324.34, mid: 322.17, sl: 320.0, dist: -12.95, state: "Mitigated" },
+  { entry: 196.57, mid: 195.64, sl: 194.72, dist: -47.24, state: "Mitigated" },
+  { entry: 194.72, mid: 191.86, sl: 189.0, dist: -47.74, state: "Mitigated" },
+  { entry: 134.25, mid: 130.97, sl: 127.68, dist: -63.97, state: "Fresh" },
+  { entry: 108.6, mid: 105.88, sl: 103.17, dist: -70.85, state: "Mitigated" },
+  { entry: 103.17, mid: 102.0, sl: 100.82, dist: -72.31, state: "Mitigated" },
+  { entry: 82.23, mid: 79.86, sl: 77.49, dist: -77.93, state: "Mitigated" },
 ];
 
 const n = (x: number, w = 9, d = 2) => x.toFixed(d).padStart(w);
@@ -85,6 +95,7 @@ async function main() {
     // demanding an exact hit: a price-convention difference shifts every
     // level slightly, and that must not read as "zone not found".
     const drift: { tv: number; ours: number; ratio: number }[] = [];
+    let exactRows = 0;
     for (const e of EXPECTED_RL_1W) {
       let best: (typeof table)[number] | null = null;
       let bestGap = Infinity;
@@ -97,11 +108,28 @@ async function main() {
         continue;
       }
       drift.push({ tv: e.entry, ours: best.entry, ratio: e.entry / best.entry });
+
+      // An exact row means every column agrees, not just the entry.
+      const exact =
+        Math.abs(best.entry - e.entry) < 0.005 &&
+        Math.abs(best.mid - e.mid) < 0.005 &&
+        Math.abs(best.sl - e.sl) < 0.005 &&
+        Math.abs(distancePct(best.entry, price) - e.dist) < 0.005 &&
+        (best.mitigated ? "Mitigated" : "Fresh") === e.state;
+
       console.log(
-        `  ${n(e.entry)}  ≈ ${n(best.entry)}   ${((bestGap * 100) as number).toFixed(2)}% apart` +
-          `   50% ${n(best.mid)}   SL ${n(best.sl)}   ${best.mitigated ? "Mitigated" : "Fresh"}`,
+        exact
+          ? `  ${n(e.entry)}  EXACT — 50%, SL, Dist % and state all agree`
+          : `  ${n(e.entry)}  ≈ ${n(best.entry)}   ${(bestGap * 100).toFixed(2)}% apart` +
+              `   50% ${n(best.mid)}   SL ${n(best.sl)}   ${best.mitigated ? "Mitigated" : "Fresh"}`,
       );
+      if (exact) exactRows++;
     }
+
+    console.log(
+      `\n  ${exactRows} of ${drift.length} comparable rows match the indicator exactly` +
+        ` (${EXPECTED_RL_1W.length - drift.length} outside the 2y window)`,
+    );
 
     /**
      * A constant offset would mean a rounding or edge-selection bug. An
@@ -110,7 +138,14 @@ async function main() {
      * adjusts for splits only. RL yields roughly 1.2% a year, which is the
      * size of the gap seen here.
      */
-    if (drift.length >= 2) {
+    const worst = Math.max(...drift.map((d) => Math.abs(1 - d.ratio)), 0);
+
+    if (exactRows === drift.length && drift.length > 0) {
+      console.log(
+        "\n  VERIFIED. The engine reproduces the indicator, so levels no longer\n" +
+          "  depend on reading a chart. Re-run this whenever the Pine is edited.",
+      );
+    } else if (drift.length >= 2 && worst > 0.0005) {
       const oldest = drift[drift.length - 1];
       const newest = drift[0];
       const widening = Math.abs(1 - oldest.ratio) > Math.abs(1 - newest.ratio);
@@ -120,9 +155,10 @@ async function main() {
       );
       console.log(
         widening
-          ? "  Offset grows with age — dividend back-adjustment, not a detection\n" +
-              "  fault. Turn the chart's ADJ toggle OFF and the tables should agree."
-          : "  Offset is flat across ages — this is NOT dividend adjustment.\n" +
+          ? "  Offset grows with age — a price convention, not a detection fault.\n" +
+              "  The chart's ADJ toggle back-adjusts for dividends; this API does not.\n" +
+              "  Turn ADJ off and the tables should agree."
+          : "  Offset is flat across ages, so it is not dividend adjustment.\n" +
               "  Suspect edge selection or rounding in the port.",
       );
     }
