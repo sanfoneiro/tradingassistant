@@ -9,14 +9,23 @@ Six agents. All times **Israel (IDT)**. US market hours in Israel time are
 > failure this project exists to eliminate.
 > Desktop app → Settings → Cowork → *"Run new tasks in the cloud"* **off**.
 
-| Agent | When | Role |
-|---|---|---|
-| Morning Sync & Brief | 09:00 Mon–Fri | **Canonical sync.** |
-| Screener & Zone Analyst | 14:00 Mon–Fri | Candidate generation. |
-| Zone Proximity Watcher | every 2h, 17:00–23:00 | Alerting. |
-| Close Sync | 23:15 Mon–Fri | Best-effort redundancy. |
-| Weekly Review | Sat 09:00 | Compounding loop. |
-| Catalyst Calendar | Sun 18:00 | Veto source. |
+| Job | When | Where | Role |
+|---|---|---|---|
+| Morning Sync & Brief | 09:00 Mon–Fri | **local agent** | **Canonical sync.** Reads Colmex in Chrome. |
+| Zone sweep | 01:10 & 16:45 Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser. |
+| Grade candidates | on demand | local agent | Judgment. |
+| Weekly Review | Sat 09:00 | local agent | Compounding loop. |
+| Catalyst Calendar | Sun 18:00 | *not built* | Veto source. |
+
+Only two of these need to be agents. Everything else is arithmetic over data
+the app already holds, and arithmetic does not need a browser, a logged-in
+session, or a machine that happens to be awake — see
+`.github/workflows/zones.yml`.
+
+The old **Screener & Zone Analyst** agent is retired. It failed 10 of its 12
+runs, and on the runs that worked it produced levels transcribed by eye out
+of a screenshot. `src/lib/zones.ts` is a port of the MTF indicator verified
+against its own table, and the sweep runs it over every name in the universe.
 
 **Why 09:00 is primary and 23:15 is the backup:** the previous US close is
 final and unchanging, so fetching it in the morning loses nothing — and the
@@ -94,6 +103,7 @@ The `trade-setup-grader` verdict, structured. Emit one per candidate.
   "catalystState": "drifted_in", "entryMechanic": "limit_zone_edge",
   "confluenceCount": 3, "zoneId": 12,
   "entry": 182.40, "stop": 176.90, "target": 198.00, "rr": 2.84,
+  "currentPrice": 183.10,
   "sizeUsd": 1180, "shares": 6,
   "gatesPassed": ["rr_2to1", "stop_beyond_structure", "verified_marks_only"],
   "gatesFailed": [],
@@ -106,6 +116,22 @@ The `trade-setup-grader` verdict, structured. Emit one per candidate.
 `gatesFailed` is returned in the response. **A suggestion with a non-empty
 `gatesFailed` must not be presented as actionable** — show it as blocked, with
 the failing gate named.
+
+`currentPrice` is required and the server checks it. An entry more than 2%
+away is rejected with `too_far_from_price`, because entry, stop, target and
+R:R are hypothetical until price is there. The stages are not
+interchangeable:
+
+| Stage | Means | Carries |
+|---|---|---|
+| `zone` | a fact about the chart | levels |
+| `wishlist` | a zone worth waiting for | a trigger, **no R:R** |
+| `suggestion` | price has arrived | real entry, stop, target, R:R |
+| trade | taken | fills |
+
+The sweep creates wishlist rows automatically for anything within 6% of a
+level, pointing at the nearest zone. A name only becomes a suggestion when
+it is close enough for the numbers to mean something.
 
 ### `zone`
 
@@ -163,18 +189,28 @@ gates failed as actionable. Never suggest placing an order for me — produce th
 ticket and I place it.
 ```
 
-### Screener & Zone Analyst — 14:00 Mon–Fri
+### Grade candidates — on demand, or after the 16:45 sweep
 
 ```
+Take the wishlist from `/api/state` — the sweep has already found the names
+within 6% of a level and ranked them by distance, so this starts from a list
+rather than building one.
+
 Use the trade-setup-grader skill. Screen ZONE-FIRST, then filter by catalyst —
 catalyst-first screening surfaces names that have already moved, which is
 exactly when the R:R gate fails.
 
-Read TradingView in Chrome. Zones come from the completed previous daily
-candle. Prioritise the two with-trend quadrants (up_demand, down_supply).
+Levels already come from the sweep, so open a chart only to see what the
+numbers cannot show — the shape of the approach, and whether the zone has
+actually rejected. Prioritise the two with-trend quadrants (up_demand,
+down_supply).
 
-For every candidate, POST a `zone` then a `suggestion` with the full verdict.
-Run every gate and veto from the /rules page and populate gatesPassed,
+For every candidate, POST a `zone`. Then a `suggestion` ONLY if price is
+already at the level — otherwise a `wishlist` entry with the trigger. The
+server enforces this and will reject a suggestion whose entry is more than
+2% from `currentPrice`.
+Run every gate and veto returned by /api/state — not the copies in this
+document — and populate gatesPassed,
 gatesFailed and vetoesCleared honestly — a suggestion that fails a gate still
 gets posted, it just gets posted as blocked.
 
@@ -232,9 +268,11 @@ new position within 48h of earnings unless the earnings is the trade.
 
 ---
 
-## The change needed in `trade-setup-grader`
+## The `trade-setup-grader` contract — done
 
-Step 9 currently reads *"Update memory."* It becomes:
+Step 2 read an account memory file and step 9 wrote one, so the brain reasoned
+from whatever a previous session happened to write down and its conclusions
+evaporated with the session. Step 2 now GETs `/api/state`; step 9 reads:
 
 ```
 ### 9. Persist the verdict
