@@ -43,9 +43,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Must match the npm that wrote package-lock.json. The lock is
+      # lockfileVersion 3 written by npm 11, which nests tsx's esbuild 0.28.2
+      # and its 26 platform binaries under tsx/node_modules/@esbuild/*. npm 10
+      # — what Node 22 ships — resolves that tree differently, looks for those
+      # packages where it would have put them, and fails `npm ci` with
+      # "Missing: @esbuild/…@0.28.2 from lock file" even though every one of
+      # them is present. Node 24 ships npm 11 and the tree agrees.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
 
       - run: npm ci
