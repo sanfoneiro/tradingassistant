@@ -388,17 +388,38 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
     lastSeenAt: new Date(),
   };
 
-  const existing = await db
-    .select()
-    .from(zones)
-    .where(
-      and(
-        eq(zones.symbol, p.symbol),
-        eq(zones.timeframe, timeframe),
-        eq(zones.direction, p.direction),
-      ),
-    )
-    .limit(1);
+  /**
+   * A symbol carries a STACK of zones per timeframe, not one. The indicator
+   * keeps up to twelve; RL's weekly chart shows eight demand zones alone.
+   * Keying on (symbol, timeframe, direction) collapsed all of them into a
+   * single row whose contents were whichever arrived last — UAL stored 3 of
+   * the 13 it actually has.
+   *
+   * The distal edge is the stable identity. `updateZones` shrinks a zone's
+   * PROXIMAL edge as price eats into it, but the far side never moves, so
+   * stopLevel identifies one zone across runs even as its entry migrates.
+   * Compared with a tolerance because it makes a round trip through a
+   * double.
+   *
+   * Payloads that carry no stopLevel — a hand-transcribed box, say — fall
+   * back to the old three-part key, so nothing that used to work stops.
+   */
+  const identity =
+    p.stopLevel != null
+      ? and(
+          eq(zones.symbol, p.symbol),
+          eq(zones.timeframe, timeframe),
+          eq(zones.direction, p.direction),
+          sql`abs(${zones.stopLevel} - ${p.stopLevel}) < 0.0001`,
+        )
+      : and(
+          eq(zones.symbol, p.symbol),
+          eq(zones.timeframe, timeframe),
+          eq(zones.direction, p.direction),
+          isNull(zones.stopLevel),
+        );
+
+  const existing = await db.select().from(zones).where(identity).limit(1);
 
   if (existing.length) {
     const wasBroken =

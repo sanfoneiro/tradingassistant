@@ -149,19 +149,28 @@ async function main() {
     process.exit(1);
   }
 
-  const limit = Number(process.argv[2]) || Infinity;
+  // A numeric argument caps the batch; anything else is a list of symbols to
+  // sweep directly. Naming symbols is how you re-check one name without
+  // waiting for the rotation to reach it.
+  const args = process.argv.slice(2).filter(Boolean);
+  const explicit = args.filter((a) => !/^\d+$/.test(a)).map((a) => a.toUpperCase());
+  const limit = Number(args.find((a) => /^\d+$/.test(a))) || Infinity;
 
   console.log(`reading the queue from ${APP_URL}…`);
   const state: State = await api("/api/state");
 
   // /api/state already returns coverage oldest-analysed first, nulls ahead
   // of everything, so the queue order is the app's and not reinvented here.
-  const queue = state.screenerCoverage.map((c) => c.symbol).slice(0, limit);
+  const queue = explicit.length
+    ? explicit
+    : state.screenerCoverage.map((c) => c.symbol).slice(0, limit);
   const never = state.screenerCoverage.filter((c) => !c.analyzedAt).length;
 
   console.log(
-    `${state.screenerCoverage.length} in the universe, ${never} never analysed. ` +
-      `Sweeping ${queue.length}.`,
+    explicit.length
+      ? `Sweeping ${queue.length} named symbol(s): ${queue.join(", ")}`
+      : `${state.screenerCoverage.length} in the universe, ${never} never analysed. ` +
+          `Sweeping ${queue.length}.`,
   );
   console.log(
     `≈${Math.ceil(queue.length / RATE_LIMIT_PER_MIN)} min at ${RATE_LIMIT_PER_MIN} req/min.\n`,
