@@ -626,6 +626,9 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
       triggerNote: w.triggerNote ?? null,
       triggerLevel: w.triggerLevel ?? null,
       distancePct: w.distancePct ?? null,
+      quadrant: w.quadrant ?? null,
+      score: w.score ?? null,
+      scoreReasons: w.scoreReasons ?? [],
       // Stamped here, at the only door into the table, so every writer agrees
       // on when a name arrived rather than each agent deciding for itself.
       triggeredAt: triggerStamp(w.distancePct, prev?.triggeredAt ?? null),

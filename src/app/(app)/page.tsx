@@ -6,6 +6,7 @@ import { Panel, Stat, Mark, Badge, Empty, RiskBar } from "@/components/ui";
 import { usd, pct, ageLabel, freshness, SOURCE_LABEL } from "@/lib/format";
 import { freeStopMove } from "@/lib/metrics";
 import { daysWaiting, TRIGGER_BAND_PCT } from "@/lib/funnel";
+import { WORTH_OPENING_A_CHART } from "@/lib/rank";
 import { safe, dbConfigured } from "@/lib/safe";
 
 export const dynamic = "force-dynamic";
@@ -40,8 +41,16 @@ export default async function AccountPage() {
       .select()
       .from(wishlist)
       .where(and(eq(wishlist.active, true), isNotNull(wishlist.triggeredAt)))
-      .orderBy(asc(wishlist.triggeredAt)),
+      .orderBy(desc(wishlist.score), asc(wishlist.triggeredAt)),
   )) ?? [];
+
+  // Being near SOME level is close to inevitable with this many zones. Only
+  // the ones whose structure earns a chart lead the page; the rest stay on
+  // the watchlist rather than turning the panel into a list nobody reads.
+  const worthLooking = arrived.filter(
+    (w) => (w.score ?? 0) >= WORTH_OPENING_A_CHART,
+  );
+  const alsoNear = arrived.length - worthLooking.length;
 
   if (account === null && open.length === 0) return <SetupNotice noData />;
 
@@ -99,21 +108,20 @@ export default async function AccountPage() {
         </div>
       )}
 
-      {arrived.length > 0 && (
+      {worthLooking.length > 0 && (
         <div className="rounded-xl border border-acc/40 bg-acc/5 px-4 py-3">
           <div className="mb-2 text-sm">
             <b className="text-acc">
-              {arrived.length} name{arrived.length > 1 ? "s" : ""} at{" "}
-              {arrived.length > 1 ? "their" : "its"} trigger.
+              {worthLooking.length} worth a look.
             </b>{" "}
             <span className="text-dim">
               Price is within {TRIGGER_BAND_PCT}% of the level, so the numbers
-              are real now — grade {arrived.length > 1 ? "them" : "it"} or drop{" "}
-              {arrived.length > 1 ? "them" : "it"}.
+              are real now — grade {worthLooking.length > 1 ? "them" : "it"} or drop{" "}
+              {worthLooking.length > 1 ? "them" : "it"}.
             </span>
           </div>
           <ul className="space-y-1.5">
-            {arrived.map((w) => {
+            {worthLooking.map((w) => {
               const days = daysWaiting(w.triggeredAt);
               return (
                 <li
@@ -134,12 +142,20 @@ export default async function AccountPage() {
                       )}
                     </span>
                   </span>
-                  <span className="text-xs text-faint">
-                    {days === 0
-                      ? "arrived today"
-                      : days === 1
-                        ? "waiting 1 day"
-                        : `waiting ${days} days`}
+                  <span className="flex items-baseline gap-3 text-xs">
+                    {/* The reasons travel with the score. A rank you cannot
+                        interrogate is an opinion wearing a number. */}
+                    <span className="text-faint">
+                      {(w.scoreReasons as string[] | null)?.join(" · ")}
+                    </span>
+                    <span className="text-faint">
+                      {days === 0
+                        ? "today"
+                        : days === 1
+                          ? "1 day"
+                          : `${days} days`}
+                    </span>
+                    <span className="tnum text-acc">{w.score?.toFixed(0)}</span>
                   </span>
                 </li>
               );
@@ -148,6 +164,18 @@ export default async function AccountPage() {
           <p className="mt-2 text-xs text-faint">
             A name sitting at its level for days without a verdict is the same
             broken loop as an action item nobody acts on.
+            {alsoNear > 0 && (
+              <>
+                {" "}
+                {alsoNear} other{alsoNear > 1 ? "s are" : " is"} also at a level
+                but score below {WORTH_OPENING_A_CHART} — countertrend, or no
+                trend at all.{" "}
+                <Link href="/watchlist" className="text-acc underline">
+                  See them
+                </Link>
+                .
+              </>
+            )}
           </p>
         </div>
       )}

@@ -268,6 +268,16 @@ export const wishlist = pgTable(
     /** Distance from the trigger at the last screen, in %. Lets the
      *  watchlist sort by "closest to going live". */
     distancePct: doublePrecision("distance_pct"),
+    /** How the zone reads against the trend it sits in. The one factor that
+     *  decides ordering — a zone's shape means nothing without it. */
+    quadrant: quadrantEnum("quadrant"),
+    /** Structural rank, 0-100. NOT a grade: it orders which charts are worth
+     *  opening. Whether the zone actually rejected, and what drove price into
+     *  it, are the grader's job and are not knowable from stored structure. */
+    score: doublePrecision("score"),
+    /** What the score was claiming, so a later review can check it. */
+    scoreReasons: jsonb("score_reasons").$type<string[]>().default([]),
+
     /** When this entry first came inside the trigger band, and still is.
      *  Cleared when price drifts back out, because the next arrival is a new
      *  event rather than a continuation. This is what makes "at its trigger

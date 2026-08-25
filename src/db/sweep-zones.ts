@@ -8,6 +8,13 @@ import {
   distancePct,
   type Zone,
 } from "../lib/zones";
+import {
+  deriveQuadrant,
+  scoreCandidate,
+  overlaps,
+  WORTH_OPENING_A_CHART,
+  type Quadrant,
+} from "../lib/rank";
 
 /**
  * The universe sweep. Reads the rotation queue, computes zones for a batch
@@ -256,6 +263,9 @@ async function main() {
     triggerLevel: number;
     distancePct: number;
     triggerNote: string;
+    quadrant: Quadrant;
+    score: number;
+    scoreReasons: string[];
     priority: number;
     active: boolean;
   }[] = [];
@@ -340,6 +350,29 @@ async function main() {
        * only a sweep that saw the symbol can say which.
        */
       if (closest) {
+        /**
+         * Rank the candidate on structure. With ~11 zones a name, being near
+         * SOME level is close to inevitable — what separates a setup from an
+         * accident is whether the zone runs with the trend, whether both
+         * timeframes agree at the price, and whether it is fresh.
+         *
+         * Confluence is checked against the OTHER timeframe: a daily zone
+         * sitting on a weekly one at the same price is the stack the Method
+         * report is meant to test.
+         */
+        const other = perTf.find((t) => t.tf !== closest!.tf);
+        const confluence = (other?.zones ?? []).some((z) =>
+          overlaps(z.entry, closest!.zone.entry),
+        );
+        const quadrant = deriveQuadrant(trend, closest.zone.direction);
+        const { score, reasons } = scoreCandidate({
+          quadrant,
+          timeframe: closest.tf,
+          fresh: !closest.zone.mitigated,
+          confluence,
+          distancePct: nearest!,
+        });
+
         watch.push({
           symbol,
           side: closest.zone.direction === "demand" ? "long" : "short",
@@ -350,8 +383,13 @@ async function main() {
             `price reaches the ${closest.tf} ${closest.zone.direction} edge at ` +
             `${round(closest.zone.entry)} (${closest.zone.mitigated ? "mitigated" : "fresh"}, ` +
             `stop ${round(closest.zone.sl)})`,
-          // Nearest first, so the watchlist sorts by "closest to going live".
-          priority: Math.abs(nearest!) <= 1 ? 1 : Math.abs(nearest!) <= 3 ? 2 : 3,
+          quadrant,
+          score,
+          scoreReasons: reasons,
+          // Structure first, distance only as a tiebreak — a countertrend
+          // name at the level deserves less attention than a with-trend one
+          // a percent away.
+          priority: score >= 70 ? 1 : score >= 50 ? 2 : score >= 30 ? 3 : 4,
           active: near,
         });
       }
@@ -406,14 +444,26 @@ async function main() {
   if (failed.length) {
     console.log(`${failed.length} failed: ${failed.map((f) => f.symbol).join(", ")}`);
   }
-  if (nearCount) {
+  /**
+   * Report the few worth a look, not everything that happens to be near a
+   * level. With ~11 zones a name the second list is most of the universe,
+   * and a list nobody can work through is as useless as an empty one.
+   */
+  const ranked = watch.filter((w) => w.active).sort((a, b) => b.score - a.score);
+  const worth = ranked.filter((w) => w.score >= WORTH_OPENING_A_CHART);
+
+  if (ranked.length) {
     console.log(
-      `\nWorth grading: ${pass
-        .filter((p) => p.nearZone)
-        .sort((a, b) => Math.abs(a.distancePct!) - Math.abs(b.distancePct!))
-        .map((p) => `${p.symbol} ${p.distancePct}%`)
-        .join(", ")}`,
+      `\nWorth opening a chart for (score ${WORTH_OPENING_A_CHART}+): ` +
+        (worth.length
+          ? worth.map((w) => `${w.symbol} ${w.score} ${w.quadrant}`).join(", ")
+          : "none — everything near a level is countertrend or contested"),
     );
+    if (ranked.length > worth.length) {
+      console.log(
+        `${ranked.length - worth.length} more sit near a level but do not earn the look.`,
+      );
+    }
   }
 
   // A sweep that wrote nothing is a failed sweep, and CI must show it as

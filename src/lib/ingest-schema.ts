@@ -174,6 +174,14 @@ export const wishlistIn = z.object({
       triggerLevel: z.number().nullable().optional(),
       /** % away at the time of screening. */
       distancePct: z.number().nullable().optional(),
+      /** How the zone reads against the trend, and the structural rank the
+       *  sweep computed. Ordering only — never a grade. */
+      quadrant: z
+        .enum(["up_demand", "up_supply", "down_supply", "down_demand", "contested"])
+        .nullable()
+        .optional(),
+      score: z.number().nullable().optional(),
+      scoreReasons: z.array(z.string()).optional(),
       priority: z.number().int().min(1).max(5).optional(),
       /** Send false to retire an entry whose zone broke or thesis died. */
       active: z.boolean().optional(),
