@@ -150,7 +150,15 @@ it is close enough for the numbers to mean something.
 
 ### `zone`
 
-Upserts on `(symbol, timeframe, direction)`. Setting `status` to
+Matched on the **distal edge** (`stopLevel`), not on
+`(symbol, timeframe, direction)` — a symbol carries a STACK of zones per
+timeframe and the three-part key collapsed them into one row holding whichever
+arrived last, which is how UAL came to store 3 of the 13 it actually has. The
+proximal edge migrates as price eats into a zone; the far side never moves, so
+it is the stable identity. A payload with no `stopLevel` still falls back to
+the old key so nothing that worked stops working.
+
+Setting `status` to
 `tested_broken` stamps `invalidatedAt` **and expires every open suggestion that
 depended on that zone** — which is what should have happened to the ZS thesis
 automatically.
