@@ -3,18 +3,25 @@
 Six agents. All times **Israel (IDT)**. US market hours in Israel time are
 **16:30 → 23:00**.
 
-> **These must run on the machine, not in the cloud.**
-> Every agent below reads Chrome against a logged-in session. A cloud-run agent
-> cannot reach it, and would silently fall back to web search — the exact
-> failure this project exists to eliminate.
-> Desktop app → Settings → Cowork → *"Run new tasks in the cloud"* **off**.
+> **Local means one of two different things, and they are worth telling apart.**
+> Morning Sync is local because it reads **Chrome** against a logged-in Colmex
+> session, which no cloud runner can reach. The grader is local because of
+> **credentials**: `.agent-token` and `.env` are gitignored, so a cloud runner
+> that clones the repo gets neither. Both would otherwise fall back to web
+> search — the exact failure this project exists to eliminate.
+>
+> The grader itself needs no browser. `src/lib/zones.ts` replaced chart-reading
+> with computed levels, and the 2026-08-25 run graded sixteen candidates
+> without opening one. Move it to the cloud the moment secrets can be supplied
+> there — a routine exists at claude.ai/code/routines, paused, waiting on that.
 
 | Job | When | Where | Role |
 |---|---|---|---|
-| Morning Sync & Brief | 09:00 Mon–Fri | **local agent** | **Canonical sync.** Reads Colmex in Chrome. |
-| Zone sweep | 01:10 & 16:45 Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser. |
-| Grade candidates | on demand | local agent | Judgment. |
-| Weekly Review | Sat 09:00 | local agent | Compounding loop. |
+| Morning Sync & Brief | **manual, on demand** | local agent | **Canonical sync.** Reads Colmex in Chrome. Deliberately unscheduled — Oron runs it when he has positions. |
+| Zone sweep | 22:10 UTC + 13:45/14:45 UTC Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser, no secrets problem — they live in GitHub Secrets. |
+| Grade candidates | **17:30 IDT Mon–Fri** | local scheduled task | Judgment. Prompt lives in this file, not in the task. |
+| Universe Refresh | weekly, Sunday | local scheduled task | Pine cannot read the TradingView Screener. |
+| Weekly Review | Sat 09:00 | *not built* | Compounding loop. |
 | Catalyst Calendar | Sun 18:00 | *not built* | Veto source. |
 
 Only two of these need to be agents. Everything else is arithmetic over data
@@ -189,34 +196,101 @@ gates failed as actionable. Never suggest placing an order for me — produce th
 ticket and I place it.
 ```
 
-### Grade candidates — on demand, or after the 16:45 sweep
+### Grade candidates — weekdays 17:30 IDT, after the intraday sweep
+
+**This section IS the scheduled task.** The task in the desktop app holds only
+a pointer to it, so editing the prompt below changes what the next run does —
+there is no second copy to keep in sync. Do not duplicate these instructions
+into the task itself.
+
+It runs locally because that is where the credentials are. `.agent-token` and
+`.env` are both gitignored, so a cloud runner has no way to read them; one was
+tried on 2026-08-25 and correctly refused to start. See "What runs, and where"
+in CLAUDE.md.
 
 ```
-Take the wishlist from `/api/state` — the sweep has already found the names
-within 6% of a level and ranked them by distance, so this starts from a list
-rather than building one.
+Grade trade-setup candidates and persist the verdicts.
 
+Repo: C:\Users\97250\Documents\Claude\Projects\tradingassistant
+App:  https://project-alr3f.vercel.app
+
+STEP 0 — CREDENTIALS
+The ingest token is the 64-char value in `.agent-token` at the repo root.
+`.env`'s INGEST_TOKEN is stale (11 chars) and is overwritten by `vercel env
+pull` — always prefer the file. MASSIVE_API_KEY comes from `.env`.
+If either is missing, STOP. Do not substitute a price from web search — that
+failure is the reason this project exists. Report what is missing and post a
+`run` with status "failed".
+
+STEP 1 — LOAD STATE
+GET /api/state. Check `asOf` and `lastRun` first; on 503 or a degraded last
+run, say "account state unavailable" and stop. Morning Sync is run MANUALLY
+and is deliberately unscheduled, so `markSource` may be "manual" and `asOf`
+may be old — if positions are open and `asOf` is stale, say so plainly rather
+than sizing silently against a book you cannot see.
+
+STEP 2 — SHORTLIST, DO NOT GRADE EVERYTHING
+From `wishlist`: |distancePct| <= 2 AND score >= 50 (WORTH_OPENING_A_CHART in
+src/lib/rank.ts). Sort by score, take at most the top 6. Typically ~50 sit in
+the band and ~15 clear the bar. `contested` cannot clear it by construction.
+
+STEP 3 — VERIFY PRICES YOURSELF
+Fetch bars via src/lib/massive.ts and confirm each candidate ties out against
+the wishlist `distancePct`. Report any that do not instead of grading them.
+Say whether the last bar is today's or the prior close. Compute 14-day ADR.
+
+STEP 4 — GRADE
 Use the trade-setup-grader skill. Screen ZONE-FIRST, then filter by catalyst —
 catalyst-first screening surfaces names that have already moved, which is
-exactly when the R:R gate fails.
+exactly when the R:R gate fails. The decisive question is what drove price
+INTO the zone: drifted in and unopposed (fade it) versus pushed in by a live
+escalating catalyst (do not fade). Web search is for CATALYSTS ONLY, never
+prices. Prioritise up_demand and down_supply.
 
-Levels already come from the sweep, so open a chart only to see what the
-numbers cannot show — the shape of the approach, and whether the zone has
-actually rejected. Prioritise the two with-trend quadrants (up_demand,
-down_supply).
+Levels already come from the sweep, so a chart only adds the shape of the
+approach and whether the zone actually rejected — both of which can be read
+from the bars when no chart is available (where the close sits in the day's
+range, and whether the zone edge was tagged and reversed).
 
-For every candidate, POST a `zone`. Then a `suggestion` ONLY if price is
-already at the level — otherwise a `wishlist` entry with the trigger. The
-server enforces this and will reject a suggestion whose entry is more than
-2% from `currentPrice`.
+Arithmetic that must hold:
+  - Stop: beyond the zone's distal edge AND no tighter than 1x ADR. The raw
+    zone box is usually too narrow — most candidates fail here.
+  - Target: the nearest opposing zone. Only when NO opposing zone exists may
+    an R-multiple target be used, and then solve for the NET ratio, not 2R.
+  - Fees: $2.00 per order minimum, so $4.00 the round trip. Quote R:R net of
+    it (see "The 2:1 gate is gross" in CLAUDE.md).
+  - Dividends: check the ex-date, use dividendImpact() in src/lib/metrics.ts.
+  - Sizing: 1% of sizingBase. If no concentration rule exists in the `rules`
+    table, post shares: null and sizeUsd: null and say sizing is pending that
+    decision. Do NOT invent a cap.
+
+STEP 5 — PERSIST
+POST each verdict as a `suggestion`, including ones that FAIL a gate — those
+store as blocked with the failing gate named, which is what stops the next run
+re-grading them. `currentPrice` is required and an entry more than 2% away is
+rejected; a name that is not there yet gets a `wishlist` entry with the
+trigger instead. Check any zone price has moved through and POST it as
+tested_broken.
+
 Run every gate and veto returned by /api/state — not the copies in this
-document — and populate gatesPassed,
-gatesFailed and vetoesCleared honestly — a suggestion that fails a gate still
-gets posted, it just gets posted as blocked.
+document — and populate gatesPassed, gatesFailed and vetoesCleared honestly.
+If a gate cannot be evaluated from available data, leave it out of BOTH arrays
+and say so; never claim it passed.
 
-Check any zone that price has moved through and POST it as tested_broken.
+expiresAt: the coming Friday 20:00 UTC, or earlier if a dated event
+(ex-dividend, earnings) should force a re-grade sooner.
 
-Take account state from the app, not from memory.
+Finish with a `run` payload: how many were in the band, how many cleared the
+bar, how many were graded, and the main rejection reason.
+
+STEP 6 — REPORT
+Short, answer first: which names are actionable, which are blocked and by
+which gate. Every level is a number. "Nothing clears the bar today" is a real
+and common result — manufacturing a candidate so the run has something to show
+is the failure this system exists to prevent.
+
+Take account state from the app, not from memory. Never suggest placing an
+order — produce the ticket; Oron places it.
 ```
 
 ### Zone Proximity Watcher — every 2h, 17:00–23:00

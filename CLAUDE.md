@@ -140,9 +140,21 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 | Job | When | Where |
 |---|---|---|
 | Zone sweep | 22:10 UTC (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions |
-| Morning Sync | daily | local scheduled task — Colmex has no API |
-| Universe Refresh | weekly | local — Pine cannot read the TradingView Screener |
-| Grade candidates | on demand | local agent — real judgment |
+| Morning Sync | **manual, on demand** | local — Colmex has no API, and Oron runs it himself when he holds positions |
+| Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
+| Grade candidates | **17:30 IDT weekdays** | local scheduled task — real judgment |
+
+**"Local" covers two different reasons.** Morning Sync needs a logged-in
+Chrome. The grader needs only credentials — `.agent-token` and `.env` are
+gitignored, so a cloud runner that clones the repo gets neither, and a cloud
+routine tried on 2026-08-25 correctly refused to start rather than guessing at
+prices. The grader needs no browser at all: `zones.ts` replaced chart-reading
+with computed levels, and that day's run graded sixteen candidates without
+opening one. It moves to the cloud as soon as secrets can be supplied there.
+
+**The grader's prompt lives in `docs/AGENTS.md`, not in the scheduled task.**
+The task holds a pointer. Edit the doc and the next run changes; there is no
+second copy to keep in sync.
 
 **Two intraday crons fire and one exits quietly.** Israel and the US change DST
 on different dates, so a fixed UTC time drifts an hour twice a year.
