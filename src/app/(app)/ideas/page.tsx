@@ -28,10 +28,16 @@ export default async function IdeasPage() {
   const zoneById = new Map(allZones.map((z) => [z.id, z]));
   const ruleByKey = new Map(allRules.map((r) => [r.key, r]));
 
-  const open = rows.filter((s) => s.status === "open");
+  // An idea past its expiry is lapsed, not open — the status column is only
+  // updated when something happens TO it, and time passing is not an event.
+  const now = Date.now();
+  const isLive = (s: (typeof rows)[number]) =>
+    s.status === "open" && (!s.expiresAt || s.expiresAt.getTime() > now);
+
+  const open = rows.filter(isLive);
   const actionable = open.filter((s) => (s.gatesFailed?.length ?? 0) === 0);
   const blocked = open.filter((s) => (s.gatesFailed?.length ?? 0) > 0);
-  const dead = rows.filter((s) => s.status !== "open");
+  const dead = rows.filter((s) => !isLive(s));
 
   return (
     <div className="space-y-5">

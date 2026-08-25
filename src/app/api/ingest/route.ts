@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await handleAccountSync(p));
       case "zone":
         return NextResponse.json(await handleZone(p));
+      case "zone_set":
+        return NextResponse.json(await handleZoneSet(p));
       case "suggestion":
         return NextResponse.json(await handleSuggestion(p));
       case "action_items":
@@ -470,6 +472,133 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
     })
     .returning();
   return { ok: true, zoneId: z.id, created: true };
+}
+
+/**
+ * Reconcile every zone the engine currently holds for one symbol/timeframe.
+ *
+ * Three outcomes per existing row, and keeping them distinct is the whole
+ * point:
+ *
+ *   still produced  → updated in place, lastSeenAt refreshed
+ *   reported broken → tested_broken + invalidatedAt, and every open suggestion
+ *                     that depended on it is expired. This is the ZS
+ *                     post-mortem behaviour, firing for the first time.
+ *   simply absent   → expired. Out of the cap, or the symbol left the screen.
+ *                     Nothing happened to the price, so nothing downstream is
+ *                     killed.
+ *
+ * Rows are expired rather than deleted: trades and journalled setups point at
+ * zones by id, and the weekly review's "how many zones tested held versus
+ * broke" needs the record to still exist.
+ */
+async function handleZoneSet(p: Extract<P, { kind: "zone_set" }>) {
+  const timeframe = normalizeTimeframe(p.timeframe);
+
+  const existing = await db
+    .select()
+    .from(zones)
+    .where(and(eq(zones.symbol, p.symbol), eq(zones.timeframe, timeframe)));
+
+  const touched = new Set<number>();
+  /** Ids handed back so the caller can point a wishlist row at a real row
+   *  rather than a level copied out of one. */
+  const ids: { stopLevel: number; direction: string; id: number }[] = [];
+  let created = 0;
+  let updated = 0;
+
+  /** The distal edge is a zone's identity: the proximal edge migrates as
+   *  price eats into it, the far side never moves. */
+  const matchByStop = (stop: number, direction: string) =>
+    existing.find(
+      (e) =>
+        e.direction === direction &&
+        e.stopLevel != null &&
+        Math.abs(e.stopLevel - stop) < 0.0001,
+    );
+
+  for (const z of p.live) {
+    const values = {
+      symbol: p.symbol,
+      direction: z.direction,
+      timeframe,
+      low: Math.min(z.entryLevel, z.stopLevel),
+      high: Math.max(z.entryLevel, z.stopLevel),
+      entryLevel: z.entryLevel,
+      midLevel: z.midLevel,
+      stopLevel: z.stopLevel,
+      distancePct: ((z.entryLevel - p.price) / p.price) * 100,
+      indicatorState: z.indicatorState ?? null,
+      status: "untested" as const,
+      lastSeenAt: new Date(),
+    };
+
+    const prev = matchByStop(z.stopLevel, z.direction);
+    if (prev) {
+      touched.add(prev.id);
+      await db.update(zones).set(values).where(eq(zones.id, prev.id));
+      ids.push({ stopLevel: z.stopLevel, direction: z.direction, id: prev.id });
+      updated++;
+    } else {
+      const [row] = await db.insert(zones).values(values).returning({ id: zones.id });
+      ids.push({ stopLevel: z.stopLevel, direction: z.direction, id: row.id });
+      created++;
+    }
+  }
+
+  let brokenCount = 0;
+  let suggestionsExpired = 0;
+
+  for (const b of p.broken) {
+    const prev = matchByStop(b.stopLevel, b.direction);
+    if (!prev) continue; // never recorded — nothing to invalidate
+    touched.add(prev.id);
+
+    if (prev.status !== "tested_broken") {
+      await db
+        .update(zones)
+        .set({
+          status: "tested_broken",
+          invalidatedAt: b.brokenAt,
+          // A break is a test, and the only one that ever resolves.
+          testCount: (prev.testCount ?? 0) + 1,
+          lastSeenAt: new Date(),
+        })
+        .where(eq(zones.id, prev.id));
+      brokenCount++;
+
+      const killed = await db
+        .update(suggestions)
+        .set({ status: "expired" })
+        .where(and(eq(suggestions.zoneId, prev.id), eq(suggestions.status, "open")))
+        .returning({ id: suggestions.id });
+      suggestionsExpired += killed.length;
+    }
+  }
+
+  // Anything the engine no longer produces has stopped being tracked. Not the
+  // same as broken, and deliberately not destructive.
+  const dropped = existing.filter(
+    (e) => !touched.has(e.id) && e.status !== "expired",
+  );
+  for (const d of dropped) {
+    await db
+      .update(zones)
+      .set({ status: "expired", invalidatedAt: d.invalidatedAt ?? new Date() })
+      .where(eq(zones.id, d.id));
+  }
+
+  return {
+    ok: true,
+    symbol: p.symbol,
+    timeframe,
+    created,
+    updated,
+    broken: brokenCount,
+    expired: dropped.length,
+    suggestionsExpired,
+    ids,
+  };
 }
 
 async function handleSuggestion(p: Extract<P, { kind: "suggestion" }>) {

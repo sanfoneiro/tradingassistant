@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, and, gt, sql } from "drizzle-orm";
+import { desc, eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accounts,
@@ -176,10 +176,19 @@ async function readState() {
       timesScreened: s.timesScreened,
     })),
 
+    /** An idea past its own expiry is not open, whatever the status column
+     *  says. Nothing sweeps expiresAt, so it has to be honoured at read
+     *  time — otherwise the grader is handed a setup that lapsed days ago
+     *  and told it is live. */
     openSuggestions: await db
       .select()
       .from(suggestions)
-      .where(eq(suggestions.status, "open")),
+      .where(
+        and(
+          eq(suggestions.status, "open"),
+          or(isNull(suggestions.expiresAt), gt(suggestions.expiresAt, new Date())),
+        ),
+      ),
 
     openActionItems: await db
       .select()

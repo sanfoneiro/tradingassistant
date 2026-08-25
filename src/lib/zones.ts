@@ -234,6 +234,34 @@ export function zoneTable(zones: Zone[], price: number, rows = 8): Zone[] {
 }
 
 /**
+ * The zones worth keeping: the nearest `perSide` above price and the nearest
+ * `perSide` below.
+ *
+ * Storing everything the engine finds is storing archaeology. A trending name
+ * accumulates a staircase of zones behind price — RL had eight daily demand
+ * zones running from 11% to 53% below, the last of them marking where the
+ * stock traded two years ago. Nobody will ever trade it, but it still counts
+ * toward confluence, still lands in /api/state, and still has to be scrolled
+ * past.
+ *
+ * Two a side answers the only two questions worth asking of a level: where do
+ * I act, and where do I act next if this one fails. A name that is trending
+ * hard legitimately has nothing on one side, and gets fewer — that is the
+ * right answer, not a shortfall to pad out.
+ */
+export function nearestZones(zones: Zone[], price: number, perSide = 2): Zone[] {
+  const byDistance = (a: Zone, b: Zone) =>
+    Math.abs(price - a.entry) - Math.abs(price - b.entry);
+
+  const below = zones.filter((z) => z.entry <= price).sort(byDistance);
+  const above = zones.filter((z) => z.entry > price).sort(byDistance);
+
+  return [...below.slice(0, perSide), ...above.slice(0, perSide)].sort(
+    byDistance,
+  );
+}
+
+/**
  * Exponential moving average of closes, aligned to `bars`. Entries before
  * the average has enough data to mean anything are null rather than a
  * short-window approximation — a 200 EMA computed off 40 bars is a

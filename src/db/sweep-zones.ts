@@ -2,17 +2,22 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { fetchDailyBars, Throttle, RATE_LIMIT_PER_MIN } from "../lib/massive";
 import {
-  computeZones,
+  computeZonesDetailed,
+  nearestZones,
   toWeekly,
   classifyTrend,
   distancePct,
   type Zone,
+  type Bar,
+  type BrokenZone,
 } from "../lib/zones";
 import {
   deriveQuadrant,
+  readBreak,
   scoreCandidate,
   overlaps,
   WORTH_OPENING_A_CHART,
+  type BreakSignal,
   type Quadrant,
 } from "../lib/rank";
 
@@ -140,32 +145,61 @@ async function api(path: string, init?: RequestInit) {
 const post = (body: unknown) =>
   api("/api/ingest", { method: "POST", body: JSON.stringify(body) });
 
-/** One zone → one ingest payload. Levels go over verbatim; the server
- *  derives the box and re-checks the midpoint, so nothing is computed twice
- *  in two places and allowed to disagree. */
-function zonePayload(
+/**
+ * One symbol/timeframe, whole. Levels go over verbatim and the server derives
+ * distance from the price we computed against, so nothing is calculated twice
+ * in two places and allowed to disagree.
+ *
+ * Only breaks from the last few bars are sent. The engine is stateless and
+ * replays the entire history every run, so without a window every sweep would
+ * re-report every break the series ever contained — and each one would expire
+ * suggestions all over again.
+ */
+const RECENT_BREAK_BARS = 5;
+
+function zoneSetPayload(
   symbol: string,
   timeframe: "1D" | "1W",
-  z: Zone,
+  live: Zone[],
+  broken: BrokenZone[],
   price: number,
+  bars: Bar[],
 ) {
+  const cutoff = bars.at(-RECENT_BREAK_BARS)?.t ?? 0;
   return {
-    kind: "zone" as const,
+    kind: "zone_set" as const,
     symbol,
-    direction: z.direction,
     timeframe,
-    entryLevel: round(z.entry),
-    midLevel: round(z.mid),
-    stopLevel: round(z.sl),
-    distancePct: round(distancePct(z.entry, price)),
-    indicatorState: z.mitigated ? "Mitigated" : "Fresh",
-    status: "untested" as const,
-    confluence: [`MTF S&D ${timeframe}`],
-    note: `computed from API bars, ${new Date().toISOString().slice(0, 10)}`,
+    price: round(price),
+    live: live.map((z) => ({
+      direction: z.direction,
+      entryLevel: round(z.entry),
+      midLevel: round(z.mid),
+      stopLevel: round(z.sl),
+      indicatorState: z.mitigated ? "Mitigated" : "Fresh",
+    })),
+    broken: broken
+      .filter((b) => b.brokenAt >= cutoff)
+      .map((b) => ({
+        direction: b.zone.direction,
+        entryLevel: round(b.zone.entry),
+        stopLevel: round(b.zone.sl),
+        brokenAt: new Date(b.brokenAt).toISOString(),
+        closedAt: round(b.closedAt),
+      })),
   };
 }
 
 const round = (n: number) => Math.round(n * 1e4) / 1e4;
+
+/** Cap the live set to the nearest two each side, keeping the breaks whole —
+ *  a break matters wherever it happened. */
+function split(
+  detailed: { live: Zone[]; broken: BrokenZone[] },
+  price: number,
+): { zones: Zone[]; broken: BrokenZone[] } {
+  return { zones: nearestZones(detailed.live, price), broken: detailed.broken };
+}
 
 async function main() {
   if (!TOKEN) {
@@ -271,6 +305,8 @@ async function main() {
   }[] = [];
 
   let zonesWritten = 0;
+  let brokenReported = 0;
+  let ideasExpired = 0;
   const failed: { symbol: string; error: string }[] = [];
 
   for (let i = 0; i < queue.length; i++) {
@@ -311,29 +347,51 @@ async function main() {
       const settled = afterOpen ? daily.slice(0, -1) : daily;
       const { trend, ma } = classifyTrend(settled);
 
-      const perTf: { tf: "1D" | "1W"; zones: Zone[] }[] = [
-        { tf: "1D", zones: computeZones(settled) },
-        { tf: "1W", zones: computeZones(toWeekly(settled)) },
-      ];
+      /**
+       * Only the nearest two each side are stored. The engine finds every
+       * level in the history — RL had eight daily demand zones running from
+       * 11% to 53% below price — but a level a third of the way down the
+       * chart is archaeology, not a decision. Two a side answers the only two
+       * questions a level has to: where do I act, and where next if this
+       * fails.
+       */
+      const perTf: { tf: "1D" | "1W"; zones: Zone[]; broken: BrokenZone[]; bars: Bar[] }[] =
+        [
+          { tf: "1D", ...split(computeZonesDetailed(settled), price), bars: settled },
+          {
+            tf: "1W",
+            ...split(computeZonesDetailed(toWeekly(settled)), price),
+            bars: toWeekly(settled),
+          },
+        ];
 
       let nearest: number | null = null;
       let closest: { zoneId: number; zone: Zone; tf: "1D" | "1W" } | null = null;
 
-      for (const { tf, zones } of perTf) {
+      for (const { tf, zones, broken, bars } of perTf) {
+        // One call per timeframe rather than one per zone. It also lets the
+        // server retire what the engine no longer produces, which posting
+        // zones individually can never do.
+        const res = await post(
+          zoneSetPayload(symbol, tf, zones, broken, price, bars),
+        );
+        zonesWritten += zones.length;
+        brokenReported += res?.broken ?? 0;
+        ideasExpired += res?.suggestionsExpired ?? 0;
+
+        const ids: { stopLevel: number; direction: string; id: number }[] =
+          res?.ids ?? [];
+
         for (const z of zones) {
           const d = distancePct(z.entry, price);
-          const res = await post(zonePayload(symbol, tf, z, price));
-          zonesWritten++;
-
-          // Keep the id of whichever zone price is nearest — that is the one
-          // the wishlist watches, and the wishlist row has to point at a real
-          // row rather than a level copied out of one.
-          if (nearest === null || Math.abs(d) < Math.abs(nearest)) {
-            nearest = d;
-            if (typeof res?.zoneId === "number") {
-              closest = { zoneId: res.zoneId, zone: z, tf };
-            }
-          }
+          if (nearest !== null && Math.abs(d) >= Math.abs(nearest)) continue;
+          const match = ids.find(
+            (i) =>
+              i.direction === z.direction &&
+              Math.abs(i.stopLevel - round(z.sl)) < 0.0001,
+          );
+          nearest = d;
+          if (match) closest = { zoneId: match.id, zone: z, tf };
         }
       }
 
@@ -365,12 +423,25 @@ async function main() {
           overlaps(z.entry, closest!.zone.entry),
         );
         const quadrant = deriveQuadrant(trend, closest.zone.direction);
+
+        // The most recent break on either timeframe, read against the trend.
+        // A supply zone giving way in an uptrend is the trend working; a
+        // demand zone giving way in the same uptrend is it failing, and the
+        // next demand below deserves suspicion rather than a queue.
+        const lastBreak = perTf
+          .flatMap((t) => t.broken)
+          .sort((a, b) => b.brokenAt - a.brokenAt)[0];
+        const recentBreak: BreakSignal = lastBreak
+          ? readBreak(trend, lastBreak.zone.direction)
+          : null;
+
         const { score, reasons } = scoreCandidate({
           quadrant,
           timeframe: closest.tf,
           fresh: !closest.zone.mitigated,
           confluence,
           distancePct: nearest!,
+          recentBreak,
         });
 
         watch.push({
@@ -428,7 +499,8 @@ async function main() {
     status: degraded ? "degraded" : "ok",
     degraded,
     notes:
-      `${pass.length}/${queue.length} swept, ${zonesWritten} zones written, ` +
+      `${pass.length}/${queue.length} swept, ${zonesWritten} zones kept, ` +
+      `${brokenReported} broken, ${ideasExpired} ideas expired, ` +
       `${nearCount} within ${NEAR_ZONE_PCT}%` +
       (failed.length
         ? `. Failed: ${failed.map((f) => f.symbol).join(", ")}`
@@ -437,7 +509,8 @@ async function main() {
 
   console.log(
     `\n${pass.length}/${queue.length} swept · ${zonesWritten} zones · ` +
-      `${nearCount} within ${NEAR_ZONE_PCT}% of a level · ` +
+      `${nearCount} within ${NEAR_ZONE_PCT}% · ` +
+      `${brokenReported} broken${ideasExpired ? `, ${ideasExpired} ideas expired` : ""} · ` +
       `${watch.filter((w) => w.active).length} watching, ` +
       `${watch.filter((w) => !w.active).length} retired`,
   );

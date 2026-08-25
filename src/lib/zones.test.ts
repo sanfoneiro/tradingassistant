@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   computeZones,
+  computeZonesDetailed,
   distancePct,
   zoneTable,
+  nearestZones,
   toWeekly,
   type Bar,
+  type Zone,
 } from "./zones";
 
 /**
@@ -361,5 +364,77 @@ describe("a forming week must not break a weekly zone", () => {
     expect(
       computeZones(toWeekly(closedBelow)).filter((x) => x.direction === "demand"),
     ).toHaveLength(0);
+  });
+});
+
+describe("nearestZones", () => {
+  const z = (entry: number): Zone => ({
+    direction: entry < 100 ? "demand" : "supply",
+    top: entry, bottom: entry - 1, entry, mid: entry - 0.5, sl: entry - 1,
+    createdAt: entry, mitigated: false, fiftyReached: false,
+  });
+
+  it("keeps two each side and drops the archaeology", () => {
+    // A staircase of eight below price and three above.
+    const all = [40, 55, 70, 82, 90, 94, 97, 99, 104, 118, 140].map(z);
+    const kept = nearestZones(all, 100);
+    expect(kept.map((x) => x.entry)).toEqual([99, 97, 104, 118]);
+  });
+
+  it("a hard trend has nothing on one side, and that is the answer", () => {
+    // RL's shape: every zone is demand below price.
+    const all = [329, 298, 283, 266, 251, 228, 204, 173].map(z);
+    const kept = nearestZones(all, 372.59);
+    expect(kept.map((x) => x.entry)).toEqual([329, 298]);
+  });
+
+  it("returns everything when there is less than the cap", () => {
+    expect(nearestZones([z(95), z(110)], 100)).toHaveLength(2);
+    expect(nearestZones([], 100)).toHaveLength(0);
+  });
+
+  it("a zone exactly at price counts as below, never both", () => {
+    const kept = nearestZones([z(100), z(101), z(102)], 100);
+    expect(kept.map((x) => x.entry)).toEqual([100, 101, 102]);
+  });
+
+  it("the cap is adjustable", () => {
+    const all = [90, 95, 105, 110].map(z);
+    expect(nearestZones(all, 100, 1).map((x) => x.entry)).toEqual([95, 105]);
+  });
+});
+
+describe("computeZonesDetailed reports breaks", () => {
+  it("a broken zone is returned rather than dropped", () => {
+    const bars = [...demandSetup(), bar(99, 99, 93, 94)]; // closes below 95
+    const { live, broken } = computeZonesDetailed(bars);
+    expect(live).toHaveLength(0);
+    expect(broken).toHaveLength(1);
+    expect(broken[0].zone.direction).toBe("demand");
+    expect(broken[0].zone.sl).toBe(95);
+    expect(broken[0].closedAt).toBe(94);
+  });
+
+  it("a wick through is not a break", () => {
+    const bars = [...demandSetup(), bar(103, 103, 94, 101)];
+    const { live, broken } = computeZonesDetailed(bars);
+    expect(live).toHaveLength(1);
+    expect(broken).toHaveLength(0);
+  });
+
+  it("breaks carry the bar that did it, newest first", () => {
+    reset();
+    const bars: Bar[] = [];
+    for (let k = 0; k < 2; k++) {
+      const base = 100 + k * 40;
+      bars.push(bar(base, base + 1, base - 1, base));
+      bars.push(bar(base, base, base - 5, base - 4));
+      bars.push(bar(base + 1, base + 3, base + 1, base + 2));
+      bars.push(bar(base + 6, base + 8, base + 5, base + 7));
+    }
+    bars.push(bar(90, 90, 80, 81)); // closes under both
+    const { broken } = computeZonesDetailed(bars);
+    expect(broken.length).toBeGreaterThanOrEqual(2);
+    expect(broken[0].brokenAt).toBeGreaterThanOrEqual(broken[1].brokenAt);
   });
 });

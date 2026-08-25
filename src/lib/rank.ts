@@ -48,6 +48,26 @@ export function isWithTrend(q: Quadrant): boolean {
   return q === "up_demand" || q === "down_supply";
 }
 
+/**
+ * What a recent break says about the name.
+ *
+ * The same event means opposite things depending on which way the trend runs.
+ * A supply zone giving way in an uptrend is the trend doing what it is
+ * supposed to — the next demand below becomes the pullback to buy. A demand
+ * zone giving way in that same uptrend is the trend failing, and the next
+ * demand below is a level to distrust rather than a queue to join.
+ */
+export type BreakSignal = "continuation" | "warning" | null;
+
+export function readBreak(
+  trend: Trend | null | undefined,
+  brokenDirection: ZoneDirection,
+): BreakSignal {
+  if (trend === "uptrend") return brokenDirection === "supply" ? "continuation" : "warning";
+  if (trend === "downtrend") return brokenDirection === "demand" ? "continuation" : "warning";
+  return null;
+}
+
 export type Candidate = {
   quadrant: Quadrant;
   timeframe: "1D" | "1W";
@@ -57,6 +77,8 @@ export type Candidate = {
   confluence: boolean;
   /** Signed distance from price to the level, in percent. */
   distancePct: number;
+  /** What the most recent break on this name said, if anything. */
+  recentBreak?: BreakSignal;
 };
 
 export type Score = { score: number; reasons: string[] };
@@ -87,6 +109,14 @@ const W = {
   mitigated: 4,
   /** Proximity is worth little: everything here is already inside the band. */
   proximityMax: 4,
+  /** A break running with the trend is the setup working. Deliberately
+   *  smaller than the with-trend weight — it sharpens an order, it does not
+   *  rewrite it. */
+  continuation: 8,
+  /** A break against the trend puts the whole premise in question, so it
+   *  outweighs the confluence and freshness that might otherwise carry a
+   *  candidate over the bar. */
+  warning: -25,
 };
 
 export function scoreCandidate(c: Candidate): Score {
@@ -122,11 +152,19 @@ export function scoreCandidate(c: Candidate): Score {
     score += W.mitigated;
   }
 
+  if (c.recentBreak === "continuation") {
+    score += W.continuation;
+    reasons.push("recent break ran with the trend");
+  } else if (c.recentBreak === "warning") {
+    score += W.warning;
+    reasons.push("recent break went AGAINST the trend — premise in question");
+  }
+
   // Linear from full marks at the level to nothing at 2% away.
   const near = Math.max(0, 1 - Math.abs(c.distancePct) / 2);
   score += near * W.proximityMax;
 
-  return { score: Math.round(score * 10) / 10, reasons };
+  return { score: Math.max(0, Math.round(score * 10) / 10), reasons };
 }
 
 /**

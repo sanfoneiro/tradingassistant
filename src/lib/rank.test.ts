@@ -5,6 +5,7 @@ import {
   scoreCandidate,
   overlaps,
   WORTH_OPENING_A_CHART,
+  readBreak,
   type Candidate,
 } from "./rank";
 
@@ -166,5 +167,66 @@ describe("overlaps", () => {
   it("rejects nonsense rather than dividing by zero", () => {
     expect(overlaps(0, 0)).toBe(false);
     expect(overlaps(-5, 5)).toBe(false);
+  });
+});
+
+describe("readBreak", () => {
+  it("supply giving way in an uptrend is the trend working", () => {
+    expect(readBreak("uptrend", "supply")).toBe("continuation");
+  });
+
+  it("demand giving way in an uptrend is the trend failing", () => {
+    expect(readBreak("uptrend", "demand")).toBe("warning");
+  });
+
+  it("the same events invert in a downtrend", () => {
+    expect(readBreak("downtrend", "demand")).toBe("continuation");
+    expect(readBreak("downtrend", "supply")).toBe("warning");
+  });
+
+  it("with no trend a break says nothing either way", () => {
+    expect(readBreak("contested", "supply")).toBeNull();
+    expect(readBreak(null, "demand")).toBeNull();
+  });
+});
+
+describe("breaks move the rank", () => {
+  const c: Candidate = {
+    quadrant: "up_demand", timeframe: "1W", fresh: true,
+    confluence: true, distancePct: 0,
+  };
+
+  it("a continuation lifts a candidate", () => {
+    expect(scoreCandidate({ ...c, recentBreak: "continuation" }).score).toBeGreaterThan(
+      scoreCandidate(c).score,
+    );
+  });
+
+  /**
+   * The point of the warning weight: a name whose trend has just been
+   * contradicted should fall below the bar even when everything structural
+   * about it still looks good.
+   */
+  it("a warning drops even a perfect setup below the cutoff", () => {
+    const good = scoreCandidate({
+      quadrant: "up_demand", timeframe: "1D", fresh: false,
+      confluence: false, distancePct: 1.5,
+    });
+    expect(good.score).toBeGreaterThanOrEqual(WORTH_OPENING_A_CHART);
+
+    const warned = scoreCandidate({
+      quadrant: "up_demand", timeframe: "1D", fresh: false,
+      confluence: false, distancePct: 1.5, recentBreak: "warning",
+    });
+    expect(warned.score).toBeLessThan(WORTH_OPENING_A_CHART);
+    expect(warned.reasons.some((r) => /premise in question/.test(r))).toBe(true);
+  });
+
+  it("a score never goes negative", () => {
+    const s = scoreCandidate({
+      quadrant: "contested", timeframe: "1D", fresh: false,
+      confluence: false, distancePct: 2, recentBreak: "warning",
+    });
+    expect(s.score).toBeGreaterThanOrEqual(0);
   });
 });

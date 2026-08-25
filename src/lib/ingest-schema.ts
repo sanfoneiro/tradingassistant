@@ -102,6 +102,57 @@ export const zoneIn = z.object({
   screenshotUrl: z.string().nullable().optional(),
 });
 
+/**
+ * A whole symbol/timeframe at once, and the only payload that can REMOVE a
+ * zone.
+ *
+ * Posting zones one at a time can only ever add or update: a level that stops
+ * being produced simply stays, so the table grows monotonically and fills with
+ * levels for prices — and stocks — that no longer matter. Sending the complete
+ * set lets the server retire the rest, and distinguishes the two ways a zone
+ * leaves:
+ *
+ *   tested_broken — price closed through the distal edge. A real event, with a
+ *                   direction, that expires anything depending on it.
+ *   expired       — no longer tracked. Outside the cap, or the symbol left the
+ *                   universe. Nothing happened to the price.
+ *
+ * Conflating those two would have the sweep quietly killing ideas every time
+ * it narrowed its own attention.
+ */
+export const zoneSetIn = z.object({
+  kind: z.literal("zone_set"),
+  symbol: z.string().min(1),
+  timeframe: z.string(),
+  /** Price at computation, so the server derives distance itself rather than
+   *  trusting a number that may have been computed against a different bar. */
+  price: z.number().positive(),
+  live: z
+    .array(
+      z.object({
+        direction: z.enum(["supply", "demand"]),
+        entryLevel: z.number(),
+        midLevel: z.number(),
+        stopLevel: z.number(),
+        indicatorState: z.string().nullable().optional(),
+      }),
+    )
+    .default([]),
+  /** Zones price has closed through since the last run. */
+  broken: z
+    .array(
+      z.object({
+        direction: z.enum(["supply", "demand"]),
+        entryLevel: z.number(),
+        stopLevel: z.number(),
+        /** The bar that did it, and its close. */
+        brokenAt: z.coerce.date(),
+        closedAt: z.number(),
+      }),
+    )
+    .default([]),
+});
+
 export const suggestionIn = z.object({
   kind: z.literal("suggestion"),
   symbol: z.string(),
@@ -248,6 +299,7 @@ export const runIn = z.object({
 export const ingestPayload = z.discriminatedUnion("kind", [
   accountSync,
   zoneIn,
+  zoneSetIn,
   suggestionIn,
   actionItemIn,
   wishlistIn,
