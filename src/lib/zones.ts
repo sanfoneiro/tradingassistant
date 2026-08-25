@@ -81,11 +81,33 @@ function refresh(z: Zone) {
   z.mid = (z.top + z.bottom) / 2;
 }
 
+/**
+ * A zone that price closed through, kept rather than dropped.
+ *
+ * The indicator deletes a broken zone and moves on, which is right for a
+ * chart — there is nothing left to draw. It is wrong for a record: a break is
+ * an event with a direction, and whether it ran with or against the trend is
+ * the difference between a continuation and a warning. The database has had
+ * `tested_broken` and `invalidatedAt` from the start with nothing to fill them.
+ */
+export type BrokenZone = {
+  zone: Zone;
+  /** Open time of the bar that closed through the distal edge. */
+  brokenAt: number;
+  /** The close that did it. */
+  closedAt: number;
+};
+
 /** One bar of maintenance over the live set. Mirrors the indicator's
  *  `maintain()`, including the order of the checks — mitigation is tested
  *  before the edge is shrunk, which changes the answer on the bar that first
  *  enters a zone. */
-function maintain(zones: Zone[], bar: Bar, opts: Required<ZoneOptions>) {
+function maintain(
+  zones: Zone[],
+  bar: Bar,
+  opts: Required<ZoneOptions>,
+  broken: BrokenZone[],
+) {
   for (let i = zones.length - 1; i >= 0; i--) {
     const z = zones[i];
 
@@ -94,6 +116,7 @@ function maintain(zones: Zone[], bar: Bar, opts: Required<ZoneOptions>) {
       opts.deleteBroken &&
       (z.direction === "demand" ? bar.c < z.bottom : bar.c > z.top)
     ) {
+      broken.push({ zone: { ...z }, brokenAt: bar.t, closedAt: bar.c });
       zones.splice(i, 1);
       continue;
     }
@@ -135,6 +158,20 @@ function maintain(zones: Zone[], bar: Bar, opts: Required<ZoneOptions>) {
  * timeframe.
  */
 export function computeZones(bars: Bar[], options: ZoneOptions = {}): Zone[] {
+  return computeZonesDetailed(bars, options).live;
+}
+
+/**
+ * The same run, with the breaks kept.
+ *
+ * Breaks accumulate across the whole history, so a caller wanting "what broke
+ * recently" must filter by `brokenAt` — every run re-reports every break the
+ * series ever contained, because the engine is stateless by design.
+ */
+export function computeZonesDetailed(
+  bars: Bar[],
+  options: ZoneOptions = {},
+): { live: Zone[]; broken: BrokenZone[] } {
   const opts: Required<ZoneOptions> = {
     maxZones: options.maxZones ?? 12,
     updateZones: options.updateZones ?? true,
@@ -142,6 +179,7 @@ export function computeZones(bars: Bar[], options: ZoneOptions = {}): Zone[] {
   };
 
   const zones: Zone[] = [];
+  const broken: BrokenZone[] = [];
   let lastCreatedAt: number | null = null;
 
   for (let i = 0; i < bars.length; i++) {
@@ -169,10 +207,13 @@ export function computeZones(bars: Bar[], options: ZoneOptions = {}): Zone[] {
       }
     }
 
-    maintain(zones, bars[i], opts);
+    maintain(zones, bars[i], opts, broken);
   }
 
-  return [...zones].sort((a, b) => b.createdAt - a.createdAt);
+  return {
+    live: [...zones].sort((a, b) => b.createdAt - a.createdAt),
+    broken: broken.sort((a, b) => b.brokenAt - a.brokenAt),
+  };
 }
 
 /** Signed distance from price to the zone's entry, as a percentage.
@@ -246,10 +287,24 @@ export function classifyTrend(
 
 /**
  * Roll daily bars into weekly ones, so a single daily pull covers both
- * timeframes. Weeks start Monday; a partial trailing week is kept, matching
- * a live chart's forming candle.
+ * timeframes. Weeks start Monday.
+ *
+ * The trailing week is DROPPED unless it has actually closed, and that
+ * default is not cosmetic. A weekly zone breaks on a CLOSE through its distal
+ * edge, and a forming week's "close" is just today's close — so a Tuesday dip
+ * deletes a weekly zone that the week ends back above. Left in, weekly levels
+ * flicker out midweek and return on Friday; worse, once breaks are reported
+ * rather than swallowed, that flicker would expire real ideas.
+ *
+ * A week counts as closed when a later week exists in the data, or when its
+ * last bar is a Friday. Short weeks ending Thursday on a holiday are held
+ * back a day rather than guessed at — a level that appears a day late is
+ * cheaper than one that vanishes and comes back.
  */
-export function toWeekly(daily: Bar[]): Bar[] {
+export function toWeekly(
+  daily: Bar[],
+  opts: { includeForming?: boolean } = {},
+): Bar[] {
   const weeks = new Map<number, Bar>();
 
   for (const b of daily) {
@@ -272,5 +327,11 @@ export function toWeekly(daily: Bar[]): Bar[] {
     }
   }
 
-  return [...weeks.values()].sort((a, b) => a.t - b.t);
+  const out = [...weeks.values()].sort((a, b) => a.t - b.t);
+  if (opts.includeForming) return out;
+
+  const lastDaily = daily.at(-1);
+  if (!lastDaily || out.length === 0) return out;
+  const closedOnFriday = new Date(lastDaily.t).getUTCDay() === 5;
+  return closedOnFriday ? out : out.slice(0, -1);
 }

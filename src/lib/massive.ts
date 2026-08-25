@@ -68,24 +68,59 @@ export class Throttle {
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A rate limit is a "come back later", not a "this symbol has no data", and
+ * conflating the two silently drops names from the universe. Two full sweeps
+ * lost 26 and 39 of 115 symbols that way — clustered at the tail, because the
+ * limit is cumulative — while every one of them fetched fine on its own.
+ *
+ * The throttle prevents most 429s; this catches the ones that slip past it,
+ * usually because another sweep is running concurrently against the same key.
+ * Backoff is generous: at five requests a minute the window is sixty seconds
+ * wide, so waiting less than that just burns another attempt.
+ */
+const RETRY_DELAYS_MS = [20_000, 45_000, 90_000];
+
 /** Key travels in the Authorization header, never the query string — URLs
  *  end up in logs and error reports. */
 async function get(path: string, symbol?: string): Promise<AggResponse> {
-  const res = await fetch(`${HOST}${path}`, {
-    headers: { Authorization: `Bearer ${apiKey()}` },
-  });
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${HOST}${path}`, {
+      headers: { Authorization: `Bearer ${apiKey()}` },
+    });
 
-  if (res.status === 429) {
-    throw new MassiveError("rate limited", 429, symbol);
+    // 429 and 5xx are both transient. A 4xx that is not 429 means the request
+    // itself is wrong, and retrying it just wastes the quota.
+    const transient = res.status === 429 || res.status >= 500;
+
+    if (transient && attempt < RETRY_DELAYS_MS.length) {
+      // Honour the server's own instruction when it gives one.
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : RETRY_DELAYS_MS[attempt];
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (res.status === 429) {
+      throw new MassiveError(
+        `rate limited after ${RETRY_DELAYS_MS.length + 1} attempts`,
+        429,
+        symbol,
+      );
+    }
+    if (!res.ok) {
+      throw new MassiveError(
+        `${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`,
+        res.status,
+        symbol,
+      );
+    }
+    return (await res.json()) as AggResponse;
   }
-  if (!res.ok) {
-    throw new MassiveError(
-      `${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`,
-      res.status,
-      symbol,
-    );
-  }
-  return (await res.json()) as AggResponse;
 }
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);

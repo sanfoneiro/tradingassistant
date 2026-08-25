@@ -262,23 +262,104 @@ describe("toWeekly", () => {
       on(9, 8, 9, 7, 9), // Fri
       on(12, 9, 20, 5, 18), // Mon, the following week
     ];
+    // The second week has not closed, so it is held back.
     const w = toWeekly(daily);
-    expect(w).toHaveLength(2);
+    expect(w).toHaveLength(1);
     expect(w[0]).toMatchObject({ o: 10, h: 16, l: 7, c: 9 });
-    expect(w[1]).toMatchObject({ o: 9, h: 20, l: 5, c: 18 });
+
+    // Asking for it explicitly returns both.
+    const forming = toWeekly(daily, { includeForming: true });
+    expect(forming).toHaveLength(2);
+    expect(forming[1]).toMatchObject({ o: 9, h: 20, l: 5, c: 18 });
   });
 
   it("a Saturday bar belongs to the week that started that Monday", () => {
-    const w = toWeekly([on(9, 8, 9, 7, 9), on(10, 9, 11, 8, 10)]); // Fri, Sat
+    const w = toWeekly([on(9, 8, 9, 7, 9), on(10, 9, 11, 8, 10)], {
+      includeForming: true,
+    });
     expect(w).toHaveLength(1);
     expect(w[0].c).toBe(10);
   });
 
-  it("keeps a partial trailing week, like a forming candle", () => {
-    reset();
-    const daily = [bar(10, 12, 9, 11), bar(11, 13, 10, 12)];
-    const w = toWeekly(daily);
+  /**
+   * The default drops a week that has not closed. A weekly zone breaks on a
+   * CLOSE through its distal edge, and a forming week's "close" is just
+   * today's — so counting it lets a Tuesday dip delete a level the week ends
+   * back above.
+   */
+  it("drops the forming week unless the last bar is a Friday", () => {
+    // Mon + Tue: two days old, and its close is Tuesday's.
+    expect(toWeekly([on(5, 10, 12, 9, 11), on(6, 11, 13, 10, 12)])).toHaveLength(0);
+
+    // Through Friday the week has closed and counts.
+    const full = [
+      on(5, 10, 12, 9, 11), on(6, 11, 13, 10, 12), on(7, 12, 13, 11, 12),
+      on(8, 12, 13, 11, 12), on(9, 12, 14, 11, 13),
+    ];
+    const w = toWeekly(full);
     expect(w).toHaveLength(1);
-    expect(w[0]).toMatchObject({ o: 10, h: 13, l: 9, c: 12 });
+    expect(w[0]).toMatchObject({ o: 10, h: 14, l: 9, c: 13 });
+  });
+});
+
+/**
+ * Regression: a weekly zone must not break on a week that has not closed.
+ *
+ * Detection needs bars[i-2] as candidate and bars[i] as confirm, so the
+ * candidate week sits TWO weeks before the gap. Getting that wrong produces a
+ * fixture with no zone at all, which then "passes" a test asserting one was
+ * deleted — the first draft of this test did exactly that.
+ */
+describe("a forming week must not break a weekly zone", () => {
+  const b = (m: number, day: number, o: number, h: number, l: number, c: number): Bar =>
+    ({ t: Date.UTC(2026, m, day), o, h, l, c });
+
+  const wk = (m: number, start: number, o: number, h: number, l: number, c: number) => [
+    b(m, start, o, h, l, o), b(m, start + 1, o, h, l, o),
+    b(m, start + 2, o, h, l, o), b(m, start + 3, o, h, l, o),
+    b(m, start + 4, o, h, l, c),
+  ];
+
+  // filler · candidate (bearish, 95–100) · middle · confirm gaps above 100
+  const history: Bar[] = [
+    ...wk(0, 5, 100, 101, 99, 100),
+    ...wk(0, 12, 100, 100, 95, 96),
+    ...wk(0, 19, 97, 99, 96, 98),
+    ...wk(0, 26, 102, 105, 101, 104),
+  ];
+
+  it("the zone exists once the confirming week has closed", () => {
+    const z = computeZones(toWeekly(history));
+    expect(z.filter((x) => x.direction === "demand")).toHaveLength(1);
+    expect(z[0].bottom).toBe(95);
+  });
+
+  it("a Tuesday dip does NOT delete it — the week has not closed", () => {
+    const midweek = [
+      ...history,
+      b(1, 2, 104, 104, 103, 104),
+      b(1, 3, 103, 103, 90, 91), // closes 91, below the zone floor of 95
+    ];
+    expect(
+      computeZones(toWeekly(midweek)).filter((x) => x.direction === "demand"),
+    ).toHaveLength(1);
+
+    // Counting the forming week is what used to delete it.
+    expect(
+      computeZones(toWeekly(midweek, { includeForming: true })).filter(
+        (x) => x.direction === "demand",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("a week that CLOSES through the edge does delete it", () => {
+    const closedBelow = [
+      ...history,
+      b(1, 2, 104, 104, 103, 104), b(1, 3, 103, 103, 90, 91),
+      b(1, 4, 91, 92, 88, 89), b(1, 5, 89, 90, 87, 88), b(1, 6, 88, 90, 86, 87),
+    ];
+    expect(
+      computeZones(toWeekly(closedBelow)).filter((x) => x.direction === "demand"),
+    ).toHaveLength(0);
   });
 });
