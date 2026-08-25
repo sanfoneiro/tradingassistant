@@ -15,3 +15,9 @@ npm-debug.log*
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+
+# Quarantined stray copy, pending deletion — contains a nested .git
+_to_delete/
+
+# Patch files delivered into the repo root, applied then discarded
+*.patch

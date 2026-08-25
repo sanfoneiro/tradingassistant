@@ -54,6 +54,24 @@ Ideas page would file them under "Actionable, every gate passed".
 `wishlist.triggeredAt` is stamped when a name enters the band and held while it
 stays, so "at its level since Tuesday and still not graded" is answerable.
 
+### The 2:1 gate is gross, and the account is small
+
+Colmex charges a **$2.00 minimum per order** — `COMMISSION` is qty × $0.004 and
+`MIN_FEE_ADJ_EQUITY` tops it up to the floor, so every order costs $2.00 and a
+round trip costs $4.00 regardless of size. On a ~$7.6k base that is 5.2% of the
+1% risk budget before anything moves.
+
+Two consequences the arithmetic hides:
+
+- **A gross-exactly-2R target can never be net 2:1 at any size.** Minimum
+  shares for net 2:1 is `3F / (reward − 2·risk)`; when `reward = 2·risk` the
+  denominator is zero. Solve for the net instead: `k = 2 + 3F/(s·risk)`.
+- **There is a minimum viable size as well as a maximum.** AER's planned risk
+  was $11.70 against a $4 round trip, so a textbook stop-out cost **−1.33R,
+  not −1.0R**. When the fee floor exceeds a concentration cap, skip the trade.
+
+Quote R:R net of the round trip whenever size is small, and say so.
+
 ### Ranking is not grading
 
 `src/lib/rank.ts` orders *which charts are worth opening*. It cannot grade:
@@ -168,7 +186,8 @@ eye. Do not resurrect it.
 src/lib/zones.ts       the engine — detection, maintenance, toWeekly, nearestZones
 src/lib/rank.ts        structural ranking; NOT grading
 src/lib/funnel.ts      the two band thresholds, in one place
-src/lib/metrics.ts     R multiples, three risk figures, MAE/MFE, expectancy
+src/lib/metrics.ts     R multiples, three risk figures, MAE/MFE, expectancy,
+                       dividendImpact (a short PAYS it; a long does not)
 src/lib/colmex.ts      screenshot parse + the arithmetic that verifies it
 src/lib/massive.ts     market data, throttled, retries 429
 src/db/sweep-zones.ts  the universe sweep (runs in CI)
@@ -184,12 +203,28 @@ because a long-only suite passes happily while shorts report a loss as a gain.
 
 ## Still open
 
-- **7 trades await journalling** — the six review fields are Oron's to write,
-  and the dashboard stays blocked until they are in. That is deliberate.
+- **10 trades await the three free-text review fields.** Fills, dates, stops,
+  P/L and R are now all verified against the Colmex *execution* export
+  (`trades_…csv` — the *transactions* export is a cash ledger with no prices).
+  What is left is `whatWorked` / `whatFailed` / `lesson`, which `/api/review`
+  requires and which are Oron's to write. Do not fabricate them, and never
+  `emotion`. **ZS and XOM first** — one is the entry-discipline lesson, the
+  other the stop-discipline one.
 - **`/sync` needs an `ANTHROPIC_API_KEY`** he has chosen not to add. The
   alternative is a typed form using the same verification arithmetic — not
   built.
-- **The grader has never run.** `trade-setup-grader` is wired to `/api/state`
-  now, but nothing schedules it, which is why Ideas stays near empty.
+- **The grader has run once, by hand (run #48, 2026-08-25) — nothing schedules
+  it.** That single run is why Ideas holds 7 suggestions instead of nothing,
+  and it will go stale on its own. Scheduling it is the highest-leverage item
+  left.
+- **`rMultiple` is permanently NULL for NKE, QQQ and NTRA.** All three were
+  entered with no stop, so there is no initial risk to divide by. That is the
+  honest record, not missing data — do not backfill a stop to make the column
+  populate.
+- **Two rule notes were rewritten on 2026-08-25** because they cited figures no
+  trade supported. Treat every `rules.note` as a claim to re-derive, not a
+  finding. The `stop_beyond_structure` note had to be retracted inside one
+  session after a single omitted trade (NTRA, +$273, also unstopped) moved its
+  bucket from −$347 to −$74.
 - **Five wishlist rows have no score** — legacy, they heal as the rotation
   reaches them.
