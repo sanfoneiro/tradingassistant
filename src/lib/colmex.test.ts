@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { checkRow, summarise, TOLERANCE, type ColmexPosition } from "./colmex";
+import {
+  checkRow,
+  summarise,
+  TOLERANCE,
+  toleranceFor,
+  type ColmexPosition,
+} from "./colmex";
 
 /**
  * The screenshot of 2026-08-23, transcribed by hand. This is the fixture that
@@ -157,5 +163,79 @@ describe("summarise", () => {
     );
     expect(s.ok).toBe(true);
     expect(s.positions).toBe(0);
+  });
+});
+
+/**
+ * The tolerance has to scale with quantity, and for a while it did not.
+ *
+ * Colmex displays Current price to two decimals but computes Net P/L from
+ * full precision, so a perfectly-transcribed row is already out by up to half
+ * a cent PER SHARE. A flat $0.02 therefore rejects correct transcriptions of
+ * anything bigger than a couple of shares — the check fires on good data,
+ * which is how a check stops being believed.
+ */
+describe("tolerance scales with quantity", () => {
+  it("is half a cent a share, plus the flat allowance", () => {
+    expect(toleranceFor(1)).toBeCloseTo(0.03, 10);
+    expect(toleranceFor(15)).toBeCloseTo(0.17, 10);
+    expect(toleranceFor(100)).toBeCloseTo(1.02, 10);
+    // and it never goes negative on a badly-signed qty
+    expect(toleranceFor(-15)).toBeCloseTo(0.17, 10);
+  });
+
+  /**
+   * NKE as it actually sat: 15 shares, open 67.89, true price 40.7349 which
+   * the screen renders as 40.73. The platform's Net P/L is computed from the
+   * true price; the transcriber can only read the rounded one.
+   */
+  const NKE_ROUNDED: ColmexPosition = {
+    symbol: "NKE",
+    side: "long",
+    qty: 15,
+    openPrice: 67.89,
+    currentPrice: 40.73, // as displayed
+    slPrice: null,
+    tpPrice: null,
+    fee: 2,
+    netPl: -409.33, // as displayed, computed by the platform from 40.7349
+    slValue: null,
+  };
+
+  it("accepts a correctly-read row whose only error is the screen's rounding", () => {
+    const r = checkRow(NKE_ROUNDED);
+    // the miss is real, and larger than the old flat tolerance
+    expect(Math.abs(r.netPlDelta)).toBeGreaterThan(TOLERANCE);
+    // but it is inside the scaled one, so the row is accepted
+    expect(Math.abs(r.netPlDelta)).toBeLessThan(toleranceFor(15));
+    expect(r.ok).toBe(true);
+    expect(r.problems).toEqual([]);
+  });
+
+  it("still catches a genuinely misread digit at the same quantity", () => {
+    // 40.73 read as 47.03 — a transposition, not a rounding artefact
+    const r = checkRow({ ...NKE_ROUNDED, currentPrice: 47.03 });
+    expect(r.ok).toBe(false);
+    expect(r.problems[0]).toMatch(/Net P\/L does not tie out/);
+  });
+
+  it("scales the SL,value check too, not just Net P/L", () => {
+    const base: ColmexPosition = {
+      symbol: "BIG",
+      side: "long",
+      qty: 50,
+      openPrice: 100.0,
+      currentPrice: 101.0,
+      slPrice: 98.0,
+      tpPrice: null,
+      fee: 2,
+      netPl: 48,
+      slValue: 100.4, // true value 100.00, out by 0.40
+    };
+    // 0.40 would fail a flat 0.02 but sits inside 0.01*50 + 0.02 = 0.52
+    expect(Math.abs(0.4)).toBeGreaterThan(TOLERANCE);
+    expect(checkRow(base).ok).toBe(true);
+    // push it past the scaled tolerance and it fails again
+    expect(checkRow({ ...base, slValue: 101.0 }).ok).toBe(false);
   });
 });

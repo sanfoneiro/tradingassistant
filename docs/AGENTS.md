@@ -4,8 +4,8 @@ Six agents. All times **Israel (IDT)**. US market hours in Israel time are
 **16:30 → 23:00**.
 
 > **Local means one of two different things, and they are worth telling apart.**
-> Morning Sync is local because it reads **Chrome** against a logged-in Colmex
-> session, which no cloud runner can reach. The grader is local because of
+> Morning Sync is local because Oron pastes **Colmex screenshots** into it by
+> hand — Colmex has no API, and there is nothing to automate against. The grader is local because of
 > **credentials**: `.agent-token` and `.env` are gitignored, so a cloud runner
 > that clones the repo gets neither. Both would otherwise fall back to web
 > search — the exact failure this project exists to eliminate.
@@ -17,7 +17,7 @@ Six agents. All times **Israel (IDT)**. US market hours in Israel time are
 
 | Job | When | Where | Role |
 |---|---|---|---|
-| Morning Sync & Brief | **manual, on demand** | local agent | **Canonical sync.** Reads Colmex in Chrome. Deliberately unscheduled — Oron runs it when he has positions. |
+| Morning Sync & Brief | **manual, on demand** | local agent | **Canonical sync.** Reads pasted Colmex screenshots. Deliberately unscheduled — Oron runs it when he holds positions. |
 | Zone sweep | 22:10 UTC + 13:45/14:45 UTC Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser, no secrets problem — they live in GitHub Secrets. |
 | Grade candidates | **17:30 IDT Mon–Fri** | local scheduled task | Judgment. Prompt lives in this file, not in the task. |
 | Universe Refresh | weekly, Sunday | local scheduled task | Pine cannot read the TradingView Screener. |
@@ -34,9 +34,9 @@ runs, and on the runs that worked it produced levels transcribed by eye out
 of a screenshot. `src/lib/zones.ts` is a port of the MTF indicator verified
 against its own table, and the sweep runs it over every name in the universe.
 
-**Why 09:00 is primary and 23:15 is the backup:** the previous US close is
-final and unchanging, so fetching it in the morning loses nothing — and the
-machine is certainly awake at 09:00, whereas at 23:15 it may be asleep.
+**There is no automatic sync, by choice.** Colmex has no API, so the account
+is read from screenshots Oron pastes when he holds positions. A flat book
+needs no sync, and a timer cannot produce a screenshot.
 
 ---
 
@@ -95,8 +95,16 @@ Four behaviours worth knowing:
   entry-based risk misranks an aged book badly.
 
 `highSinceOpen` / `lowSinceOpen` are the extreme prices seen since the last
-sync. The server keeps the running extreme. **These are the only way MAE/MFE
-can ever be known** — they cannot be recovered after the trade closes.
+sync, and the server keeps the running extreme. **These are the only way
+MAE/MFE can ever be known for an OPEN position** — they cannot be recovered
+afterwards.
+
+In practice they are always null: the Colmex Positions panel does not show a
+day's high or low, so the manual sync has nothing to send. MAE/MFE is
+therefore not being captured at all today. For a CLOSED trade the window
+high and low can be reconstructed from daily bars, except on the entry day
+where the bar cannot say whether the extreme came before or after the fill —
+so the loss is real but partial. Known gap; do not invent values to fill it.
 
 ### `suggestion`
 
@@ -178,46 +186,149 @@ a timer against a flat book writes nothing useful, and one that runs without
 a screenshot has nothing to read.
 
 ```
-Sync the account from the Colmex screenshots Oron has pasted, then brief him.
+SYNC — TradingAssistant. App: https://project-alr3f.vercel.app
 
-If no screenshot has been provided, ASK for one. Do not open a browser, do not
-guess at the book, and do not carry forward numbers from an earlier run.
+Everything you need is in this prompt. Do not open the broker platform. Do not
+fetch prices from the web. The attached Colmex PRO screenshot(s) are the ONLY
+source of truth for account numbers.
 
-TRANSCRIBE, THEN VERIFY. Use COLMEX_PROMPT in src/lib/colmex.ts to transcribe,
-then run checkRow() on every row. Colmex publishes redundant columns and they
-are the whole point:
+The ingest token is the 64-char value in `.agent-token` at the repo root. Never
+paste it into a prompt — an earlier version of this task carried it in
+plaintext, which put a database write credential into every copy of it.
 
-    Net P/L   = (current - open) x qty x direction - fee
-    SL,value  = |open - stop| x qty
+============ STEP 0 — CHECK FOR THE SCREENSHOT ============
+Before anything else, check whether a Colmex screenshot is attached.
 
-Any row that does not tie out within TOLERANCE (2 cents — Colmex truncates to
-the cent, so an exact 31.345 prints as 31.34) is REPORTED, not posted. Ask for
-a clearer screenshot instead of transcribing it twice and hoping.
+If NONE is attached, reply with exactly:
+"Send me the Colmex screenshots — Positions panel and Working orders panel,
+full window, headers visible. I'll wait."
+and STOP. Do not transcribe, search, post, or use any tool. Wait for the images.
 
-POST account_sync to $APP_URL/api/ingest with source "manual". Send the FULL
-current position list every time — a position that is absent is treated as
-closed and moved to pending_review. `fee` is positive even though Colmex shows
-it negative. `mark: null` is a valid answer for a row that cannot be read; a
-plausible guess is not.
+============ STEP 1 — TRANSCRIBE ============
+HEADER:  ACCOUNT (COLH70142), PROJECTED BALANCE, BALANCE, WARN. MARGIN REQ.%
+         Also the platform clock, bottom right ("08:43:59 (UTC+03:00)") — that
+         is the capture time. Convert it to UTC for markAt.
 
-If the screenshots are unreadable or incomplete, POST
-{"kind":"account_sync","degraded":true,"notes":"<why>"} and STOP.
+POSITIONS: Symbol | Side | Quantity | Open price | Current price | Fee | Net P/L
+         Use the FULL precision of Open price (it shows 8 decimals).
+         FEE is shown negative ("-2.00 USD"); record the ABSOLUTE value. Every
+         position has one; do not skip it. Without the fee the app's P/L is
+         gross while the platform's is net, and the two will never tie out.
 
-Send highSinceOpen / lowSinceOpen for each open position — the server keeps the
-running extreme, and this is the ONLY way MAE/MFE can ever be known. It cannot
-be reconstructed after the trade closes.
+WORKING ORDERS: Symbol | Side | Type | Price | Stop price | Validity | Quantity
+         "S/L for <id>" is the STOP  -> read the "Stop price" column.
+         "T/P for <id>" is the TARGET -> read the "Price" column.
+         Match to positions by symbol. A position with no S/L row has
+         "stop": null. One with no T/P row has "target": null.
 
-Then produce the brief:
-- overnight gaps and futures direction
-- any catalyst on a held or wishlisted name in the next 48h
-- for each position: distance to stop, distance to target, and whether the stop
-  can now be moved to breakeven for free (freeStopMoves in /api/state)
-- total risk-from-mark as a percentage of the sizing base
-- action items, as an action_items payload — the COMPLETE current list
+============ STEP 2 — TWO GATES ============
+Both must pass before anything is sent. If either fails, STOP, say exactly
+what failed, ask for a fresh screenshot, and POST nothing.
 
-Rules: every price comes from the screenshot, never from web search. Never
-present a setup whose gates failed as actionable. Never suggest placing an
-order — produce the ticket and Oron places it.
+GATE 1 — COMPLETENESS. The tab labels state the expected counts:
+  "Positions (N)" and "Working orders (M)". Count the rows you actually
+  transcribed. If either is short, the panel was cut off — ask for it scrolled.
+
+GATE 2 — ARITHMETIC. The screenshot contains redundant data, so the
+  transcription can prove itself. Use checkRow() in src/lib/colmex.ts:
+
+      long :  (current - open) x qty - fee
+      short:  (open - current) x qty - fee
+
+  Tolerance is toleranceFor(qty) = 0.01 x qty + 0.02, NOT a flat figure. The
+  screen rounds prices to two decimals while the engine carries more, so a
+  correctly-read row is already out by up to half a cent per share.
+
+  Inside tolerance, the row is verified. Outside it, a digit was misread:
+  STOP, name the symbol, show your computed value against the displayed one,
+  and ask for a clearer screenshot. NEVER adjust a number to make the
+  arithmetic work.
+
+  Report the gate result in one line, e.g. "6/6 positions reconcile within
+  tolerance; 11/11 orders read."
+
+============ STEP 3 — POST THE SYNC ============
+POST /api/ingest, kind "account_sync", agent "manual_sync".
+
+  account: label COLH70142, broker Colmex,
+           balance    = BALANCE from the header
+           equity     = PROJECTED BALANCE
+           sizingBase = balance (1% of this is the risk budget)
+           source     = "manual"
+  positions[]: symbol, side, qty, entry (full-precision Open price),
+           stop (from the S/L row, else null), target (T/P row, else null),
+           mark (Current price), markSource "manual",
+           markAt (platform clock, in UTC), fee (POSITIVE, required),
+           highSinceOpen: null, lowSinceOpen: null
+  orders[]: { symbol, type: "stop" | "tp", level, qty, status: "working" }
+
+  highSinceOpen / lowSinceOpen are NOT shown on this screen, so they stay
+  null. That means MAE/MFE is not being captured for open positions and
+  cannot be recovered afterwards. Known gap — do not invent values to fill it.
+
+RULES FOR THIS PAYLOAD
+- Send EVERY open position, every time. A position missing from the list is
+  treated as closed and moved to pending_review.
+- A number you could not read is null. Never estimate, never carry a value
+  over from a previous run, never take one from the web.
+- source and markSource are "manual" — these came from a human reading a
+  screen, not an automated platform read. Label it honestly.
+
+If no usable screenshot was attached, or it is unreadable, POST this and stop:
+{ "kind":"account_sync", "agent":"manual_sync",
+  "account":{"label":"COLH70142","balance":null,"equity":null,"source":null},
+  "positions":[], "degraded":true, "notes":"<what was wrong>" }
+
+============ STEP 4 — THE BRIEF ============
+Report the POST result (positions written, marks written, anything moved to
+pending_review), then:
+
+BREAKEVEN DIRECTION — get this wrong and every sign flips.
+  LONG : breakeven = entry. A stop BELOW entry is the LOSING side; move it UP.
+  SHORT: breakeven = entry. A stop ABOVE entry is the LOSING side; move it DOWN.
+  A short whose stop is above entry is NOT "already past breakeven" — it is
+  the opposite. Check this explicitly for every short before writing a word.
+
+RISK FROM HERE — the table that decides things.
+    long: (mark - stop) x qty      short: (stop - mark) x qty
+  Give the total in dollars and as % of sizingBase, and each position's share,
+  ranked descending. This is deliberately NOT initial risk: on an aged book
+  they diverge hard, and a position deep underwater with a nearby stop shows
+  huge initial risk while having almost nothing left to lose.
+
+LOCKED GAINS — any position whose stop is past breakeven cannot lose money.
+  State the guaranteed profit. Say plainly it is a locked gain, not risk; its
+  risk-from-here figure is giveback of open profit only.
+
+FREE STOP MOVES — a position IN PROFIT whose stop is still on the losing side
+  of entry. The value is the CAPITAL LOSS REMOVED. State it separately from
+  giveback — the open profit still sitting beyond the new stop. Moving to
+  breakeven removes the possible loss; it does not remove the giveback, so
+  never write "risk -> $0". These cost nothing and are the highest
+  value-per-effort action available.
+  positionRisk() and freeStopMove() in src/lib/metrics.ts compute all three.
+
+TARGETS — flag any sitting beyond a known supply/demand shelf, or that price
+  has approached and failed more than once.
+
+CATALYSTS — earnings or macro events on any held name within 48h.
+
+OVERNIGHT — gaps and futures direction. This may come from the web; it is
+  context, not a price that reaches the database.
+
+RANKED ACTIONS — most valuable first, each with the dollar impact.
+
+============ STEP 5 — POST ACTION ITEMS ============
+kind "action_items", agent "manual_sync". Item kinds: close | move_stop |
+adjust_tp | open | review. Each carries symbol, text, rationale, mark, qty.
+
+Send the COMPLETE current list. Items you stop sending are marked resolved;
+items repeated accrue their cost of delay automatically.
+
+============ STANDING RULES ============
+- Every account number comes from the screenshot. Nothing else.
+- Never present a setup whose gates failed as actionable.
+- Never place, modify or close an order. Produce the ticket; Oron executes.
 ```
 
 ### Universe Refresh — weekly, Sunday 18:00

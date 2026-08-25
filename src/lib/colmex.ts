@@ -23,10 +23,27 @@ import { z } from "zod";
  * exactly. We keep the platform's convention so the app and the screen agree.
  */
 
-/** Both invariants must hold within this many dollars. Tighter than a cent
- *  would fail on the platform's own rounding; looser would let a misread
- *  digit through. */
+/** Base allowance, before quantity. */
 export const TOLERANCE = 0.02;
+
+/**
+ * How far a row may miss by and still be considered transcribed correctly.
+ *
+ * This HAS to scale with quantity, and a flat figure quietly broke the check
+ * on every position bigger than a couple of shares. The screen rounds prices
+ * to two decimals while the platform computes Net P/L from full precision, so
+ * a perfectly-read row is already off by up to half a cent per share before
+ * anyone makes a mistake: at 15 shares that is $0.075, nearly four times the
+ * flat $0.02, and the row would be rejected for being right.
+ *
+ * A check that fires on good data is worse than no check — it trains you to
+ * wave it through, and then it is not there on the day the digit really is
+ * wrong. Half a cent a share plus two cents of slack, which is the tolerance
+ * the working sync prompt has used all along.
+ */
+export function toleranceFor(qty: number): number {
+  return 0.01 * Math.abs(qty) + TOLERANCE;
+}
 
 export const colmexPosition = z.object({
   symbol: z.string().min(1),
@@ -86,10 +103,12 @@ export function checkRow(p: ColmexPosition): RowCheck {
   const dir = p.side === "long" ? 1 : -1;
   const problems: string[] = [];
 
+  const tol = toleranceFor(p.qty);
+
   const computedNetPl =
     dir * (p.currentPrice - p.openPrice) * p.qty - Math.abs(p.fee);
   const netPlDelta = computedNetPl - p.netPl;
-  if (Math.abs(netPlDelta) > TOLERANCE) {
+  if (Math.abs(netPlDelta) > tol) {
     problems.push(
       `Net P/L does not tie out: (${p.currentPrice} − ${p.openPrice}) × ${p.qty}` +
         `${p.side === "short" ? " × −1" : ""} − ${Math.abs(p.fee)} = ` +
@@ -102,7 +121,7 @@ export function checkRow(p: ColmexPosition): RowCheck {
   if (p.slPrice != null && p.slValue != null) {
     computedSlValue = Math.abs(p.openPrice - p.slPrice) * p.qty;
     slValueDelta = computedSlValue - p.slValue;
-    if (Math.abs(slValueDelta) > TOLERANCE) {
+    if (Math.abs(slValueDelta) > tol) {
       problems.push(
         `SL,value does not tie out: |${p.openPrice} − ${p.slPrice}| × ${p.qty} = ` +
           `${computedSlValue.toFixed(2)}, screen shows ${p.slValue.toFixed(2)}`,
