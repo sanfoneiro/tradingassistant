@@ -226,41 +226,77 @@ Reads the saved TradingView screen, which Pine cannot do. Needs a logged-in
 Chrome, so this one is genuinely local for browser reasons, not credential
 reasons.
 
+**The job that has never failed**, because reading the screener DOM does not
+depend on the chart canvas rendering — which is what broke the retired
+screener agent. Keep it that way: no charts, no prices, no analysis. A list.
+
 ```
-Refresh the symbol universe from the saved TradingView screen.
+Your only job is to answer: which symbols are on the saved screen today?
+No charts. No zones. No grading. No prices. If you find yourself opening a
+chart, you have misread this prompt.
 
-Open Chrome to TradingView (already logged in) and open the saved screener
-named "EMA 200". Read the full symbol list.
+=================== STEP 1 — READ THE SCREEN ===================
+Open TradingView in Chrome (already logged in), open the Stock Screener, and
+load the saved screen named "EMA 200".
 
-If the screen cannot be opened — not logged in, page will not load, screener
-missing — POST a `run` with status "failed" and the reason, and STOP. Do not
-reconstruct the list from memory, from a previous run, or from web search. A
-short universe silently becomes a short sweep, and the names that fall off
-stop being watched without anyone noticing.
+Extract the full Symbol column FROM THE DOM — do not scroll-screenshot it.
+Transcribing levels by eye is what killed the retired screener agent, and a
+symbol list is no more forgiving. The list runs to about 100 rows and the row
+count is shown in the panel header: compare your extracted count against it
+and say so if they disagree.
 
-Read the tickers exactly as TradingView shows them. Do not correct, expand or
-guess at a symbol — the sweep looks them up verbatim against massive.com, and a
+If the saved screen will not load, STOP, post a degraded run, and say so. Do
+not substitute a different screen or a remembered list. The universe is
+Oron's, not yours.
+
+Read tickers exactly as shown. Do not correct, expand or tidy a symbol that
+looks odd — the sweep looks them up verbatim against massive.com, so a
 "corrected" ticker is a name that silently returns no data.
 
-POST to $APP_URL/api/ingest:
+=================== STEP 2 — GET THE CURRENT LIST ===================
+GET $APP_URL/api/state and read `screenerCoverage` — every symbol the app
+already knows. `removed` has to be a real diff, not an assumption.
 
-    {"kind":"universe", "screen":"EMA 200",
-     "symbols":[...everything on the screen...],
-     "removed":[...names that were on it last week and are not now...]}
+=================== STEP 3 — POST THE REFRESH ===================
+  { "kind":"universe",
+    "screen":"EMA 200",
+    "symbols":[ every symbol currently on the screen ],
+    "removed":[ symbols in screenerCoverage that are NO LONGER on the
+                screen — they drop out of the analysis queue ] }
 
-Get the previous list from /api/state's screenerCoverage so `removed` is real
-rather than assumed.
+New names arrive with `analyzedAt` null, which puts them at the FRONT of the
+analysis queue. Names already known simply have their last-seen date
+refreshed — appearing on the screen again is not the same as having been
+looked at, so their analysed status is left alone.
 
-Then report: how many symbols, how many added, how many removed, and name the
-removals — a name leaving the screen expires its zones, which is different from
-a zone breaking, and Oron should see which ones went.
+=================== STEP 4 — RECORD ===================
+  { "kind":"run", "agent":"universe_refresh", "status":"ok",
+    "degraded":false,
+    "notes":"99 on screen, 12 new, 4 dropped, 61 awaiting analysis" }
 
-Known issue, worth flagging but NOT fixing silently: the EMA-200 screen carries
-unchartable OTC foreign secondaries (DTEGF, SNEJF, ZIJMF, HNHPF, AXAHF, NVZMY)
-that eat rotation slots. Report any you see. Adding a volume floor and a
-primary-listing filter is Oron's call to make on the screen itself, not
-something to filter out here — the app should see what the screen actually says.
+=================== STEP 5 — REPORT ===================
+Short. Five lines at most:
+  - how many symbols the screen returned, and whether that matched the
+    header count
+  - which names are NEW this week
+  - which DROPPED OFF — itself information, since a name leaving the screen
+    may be a name whose trend just changed
+  - how many now await first analysis
+  - anything that looked wrong about the list
+
+FLAG ILLIQUID LISTINGS. If the screen returns OTC foreign secondaries
+(tickers ending F or Y with tiny volume — DTEGF, SNEJF, ZIJMF, HNHPF, AXAHF,
+NVZMY and similar), name them. They are usually unchartable and they consume
+analysis slots that should go to tradeable names. Recommend an average-volume
+floor and a primary-listing filter on the saved screen — but do NOT filter
+them out here. The app should see what the screen actually says; changing the
+screen is Oron's call.
 ```
+
+**Do not hardcode the ingest token into a task prompt.** Read it from
+`.agent-token` at the repo root. The earlier version of this task carried the
+64-character token in plaintext, which put a database write credential into
+every copy of the prompt and every screenshot of it.
 
 ### Grade candidates — weekdays 17:30 IDT, after the intraday sweep
 
