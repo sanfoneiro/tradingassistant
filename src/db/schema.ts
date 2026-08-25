@@ -613,3 +613,65 @@ export const runs = pgTable("runs", {
   marksWritten: integer("marks_written").default(0),
   notes: text("notes"),
 });
+
+/* ------------------------------------------------------------------ *
+ * Signal outcomes — what happened to ideas that were never taken
+ * ------------------------------------------------------------------ */
+
+export const signalResolutionEnum = pgEnum("signal_resolution", [
+  "never_triggered",
+  "hit_target",
+  "hit_stop",
+  /** One session's range covered both levels; a daily bar cannot say which
+   *  came first. Excluded from the win rate, never folded into it. */
+  "ambiguous",
+  /** One move carried price through the entry AND past the stop. */
+  "gapped_through",
+  "unresolved",
+  /** A level that is not a finite number, or sits on the wrong side of the
+   *  fill. A parse error surfacing, not a result. */
+  "bad_input",
+]);
+
+/**
+ * The suggestion is the claim; this is the measurement, and they are kept
+ * apart so recomputing one never edits the other.
+ *
+ * This is the only thing in the system that can grade the grader. A trade
+ * measures ideas Oron chose to take, which is a biased sample of the
+ * grader's own output — and it says nothing at all about the ideas a veto
+ * BLOCKED, where a blocked winner is the evidence that a rule is too strict.
+ */
+export const signalOutcomes = pgTable("signal_outcomes", {
+  id: serial("id").primaryKey(),
+  suggestionId: integer("suggestion_id")
+    .notNull()
+    .unique()
+    .references(() => suggestions.id, { onDelete: "cascade" }),
+  resolution: signalResolutionEnum("resolution").notNull(),
+
+  entryPrice: doublePrecision("entry_price"),
+  exitPrice: doublePrecision("exit_price"),
+  triggeredAt: timestamp("triggered_at", { withTimezone: true }),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  barsToTrigger: integer("bars_to_trigger"),
+  barsHeld: integer("bars_held"),
+
+  rGross: doublePrecision("r_gross"),
+  rNet: doublePrecision("r_net"),
+  /** SPY over the same holding period. Without it, a book that is 93% long
+   *  in a rising tape reads as skill. */
+  benchmarkPct: doublePrecision("benchmark_pct"),
+
+  /** The signal's own session already traded through its entry. Suggestions
+   *  are written mid-session, so whether it filled before or after the
+   *  suggestion existed is an intraday fact a daily bar cannot answer.
+   *  Excluded from headline stats rather than guessed. */
+  sameDayTouch: boolean("same_day_touch").default(false).notNull(),
+
+  triggerWindow: integer("trigger_window"),
+  resolveWindow: integer("resolve_window"),
+
+  note: text("note"),
+  computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
+});

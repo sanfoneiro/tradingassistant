@@ -19,7 +19,8 @@
     "db:repair-levels": "tsx --env-file=.env src/db/repair-planned-levels.ts",
     "db:verify-zones": "tsx --env-file=.env src/db/verify-zones.ts",
     "db:backfill-aug": "tsx --env-file=.env src/db/backfill-aug-2026.ts",
-    "db:fix-timeframes": "tsx --env-file=.env src/db/fix-timeframes.ts"
+    "db:fix-timeframes": "tsx --env-file=.env src/db/fix-timeframes.ts",
+    "signals:score": "tsx --env-file=.env src/db/score-signals.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
