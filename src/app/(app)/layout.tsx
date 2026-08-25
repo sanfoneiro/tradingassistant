@@ -10,6 +10,7 @@ const NAV = [
   { href: "/journal", label: "Journal" },
   { href: "/reports", label: "Reports" },
   { href: "/rules", label: "Rules" },
+  { href: "/guide", label: "Guide" },
 ];
 
 export default async function AppLayout({
