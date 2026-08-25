@@ -1,0 +1,13 @@
+-- Average daily range, per symbol, so the app can tell a free stop move from a
+-- stop inside the noise band.
+--
+-- freeStopMove() reported any breakeven move on a position one cent in profit.
+-- On SSB that meant "raise the stop to 105.64" while price was 105.80 — sixteen
+-- cents away, against a $1.80 average daily range and smaller than every one of
+-- the last twenty daily ranges. It would have been hit by noise the same day,
+-- and rule 8 says a stop is never tighter than roughly one ADR.
+--
+-- The sweep already pulls bars for every symbol twice a day, so this costs
+-- nothing to maintain. Nullable: a symbol nobody has swept has no ADR, and the
+-- honest answer is then "cannot verify this move", not "safe".
+ALTER TABLE screener_coverage ADD COLUMN IF NOT EXISTS adr double precision;

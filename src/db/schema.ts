@@ -319,6 +319,10 @@ export const screenerCoverage = pgTable(
     /** Did it survive the fast pass into full grading? */
     nearZone: boolean("near_zone").default(false).notNull(),
     trend: text("trend"), // uptrend | downtrend | contested
+    /** 14-day average daily range, in dollars, from the sweep's own bars.
+     *  The noise band: a stop closer than this gets hit whether or not the
+     *  thesis is right, which is what makes a "free" stop move expensive. */
+    adr: doublePrecision("adr"),
     note: text("note"),
     timesScreened: integer("times_screened").default(1).notNull(),
   },

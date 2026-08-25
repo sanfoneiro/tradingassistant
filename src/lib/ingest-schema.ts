@@ -271,6 +271,9 @@ export const screenerPassIn = z.object({
       distancePct: z.number().nullable().optional(),
       nearZone: z.boolean().default(false),
       trend: z.enum(["uptrend", "downtrend", "contested"]).nullable().optional(),
+      /** 14-day average daily range in dollars. The noise band — what tells a
+       *  free stop move from one that gets hit by an ordinary day. */
+      adr: z.number().nullable().optional(),
       note: z.string().nullable().optional(),
     }),
   ),

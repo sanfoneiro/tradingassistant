@@ -68,6 +68,12 @@ async function readState() {
   const totalRiskFromMark = open.reduce((a, p) => a + (p.riskFromMark ?? 0), 0);
   const totalCapitalAtRisk = open.reduce((a, p) => a + (p.riskUsd ?? 0), 0);
 
+  // ADR per symbol, so a "free" move can be checked against the noise band
+  // rather than merely against profitability.
+  const adrBySymbol = new Map(
+    (await db.select().from(screenerCoverage)).map((c) => [c.symbol, c.adr]),
+  );
+
   const free = open
     .map((p) => {
       const m = freeStopMove({
@@ -76,6 +82,7 @@ async function readState() {
         stop: p.stop,
         mark: p.mark,
         qty: p.qty,
+        adr: adrBySymbol.get(p.symbol) ?? null,
       });
       return m
         ? {
@@ -85,6 +92,14 @@ async function readState() {
             from: p.stop,
             to: Number(m.to.toFixed(4)),
             removes: Number(m.removes.toFixed(2)),
+            /** Only `safe: true` is an action. `false` means the breakeven
+             *  stop would sit inside the noise band and get hit by an ordinary
+             *  day; `null` means no ADR is known and it cannot be checked.
+             *  Neither should be presented as a free move. */
+            safe: m.safe,
+            adrMultiple:
+              m.adrMultiple == null ? null : Number(m.adrMultiple.toFixed(2)),
+            reason: m.reason,
           }
         : null;
     })

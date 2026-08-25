@@ -852,6 +852,10 @@ async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
           distancePct: s.distancePct ?? null,
           nearZone: s.nearZone,
           trend: s.trend ?? null,
+          // Keep the last known ADR when a pass does not carry one — a stale
+          // noise band still beats no noise band, which reads as "unverified"
+          // and silently withdraws the free-stop-move check.
+          adr: s.adr ?? prev.adr ?? null,
           note: s.note ?? null,
           timesScreened: prev.timesScreened + 1,
         })
@@ -863,6 +867,7 @@ async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
         distancePct: s.distancePct ?? null,
         nearZone: s.nearZone,
         trend: s.trend ?? null,
+        adr: s.adr ?? null,
         note: s.note ?? null,
       });
     }

@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { desc, eq, and, isNotNull, asc } from "drizzle-orm";
 import { db } from "@/db";
-import { accounts, positions, actionItems, runs, trades, wishlist } from "@/db/schema";
+import {
+  accounts,
+  positions,
+  actionItems,
+  runs,
+  trades,
+  wishlist,
+  screenerCoverage,
+} from "@/db/schema";
 import { Panel, Stat, Mark, Badge, Empty, RiskBar } from "@/components/ui";
 import { usd, pct, ageLabel, freshness, SOURCE_LABEL } from "@/lib/format";
 import { freeStopMove } from "@/lib/metrics";
@@ -71,8 +79,18 @@ export default async function AccountPage() {
 
   const noStop = open.filter((p) => p.stop == null);
 
-  // Free stop moves: in profit, stop still on the losing side of entry.
-  const freeMoves = open
+  // Free stop moves: in profit, stop still on the losing side of entry, AND
+  // the breakeven stop clears the noise band. The last condition is the one
+  // that matters — a breakeven stop inside one day's range is hit whether or
+  // not the trade is right, which is the opposite of free.
+  const adrBySymbol = new Map(
+    ((await safe(() => db.select().from(screenerCoverage))) ?? []).map((c) => [
+      c.symbol,
+      c.adr,
+    ]),
+  );
+
+  const allMoves = open
     .map((p) => {
       const m = freeStopMove({
         side: p.side,
@@ -80,11 +98,15 @@ export default async function AccountPage() {
         stop: p.stop,
         mark: p.mark,
         qty: p.qty,
+        adr: adrBySymbol.get(p.symbol) ?? null,
       });
       return m ? { p, ...m } : null;
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.removes - a.removes);
+
+  const freeMoves = allMoves.filter((m) => m.safe === true);
+  const heldMoves = allMoves.filter((m) => m.safe !== true);
   const freeTotal = freeMoves.reduce((a, m) => a + m.removes, 0);
 
   return (
@@ -279,10 +301,44 @@ export default async function AccountPage() {
             ))}
           </ul>
           <p className="mt-3 text-xs text-faint">
-            Each position is in profit with its stop still on the losing side of
-            entry. Moving to breakeven removes the possible loss; the open
-            profit above the new stop is still given back if it fills.
+            Each position is in profit, its stop is still on the losing side of
+            entry, and breakeven clears the noise band. Moving to breakeven
+            removes the possible loss; the open profit above the new stop is
+            still given back if it fills.
           </p>
+        </Panel>
+      )}
+
+      {heldMoves.length > 0 && (
+        <Panel title="Breakeven moves that are not free yet">
+          <ul className="space-y-2">
+            {heldMoves.map(({ p, to, removes, safe, adrMultiple }) => (
+              <li
+                key={p.id}
+                className="rounded-lg border border-line bg-panel2 px-3 py-2 text-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <span>
+                    <b>{p.symbol}</b>{" "}
+                    <span className="text-dim">
+                      breakeven would be{" "}
+                      <span className="tnum">${to.toFixed(2)}</span>
+                    </span>
+                  </span>
+                  <Badge tone={safe === null ? "neutral" : "warn"}>
+                    {safe === null
+                      ? "no ADR — unverified"
+                      : `${adrMultiple?.toFixed(2)}× ADR — inside the noise band`}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-faint">
+                  {safe === null
+                    ? `Would remove ${usd(removes)}, but without an average daily range for ${p.symbol} there is no way to tell whether that stop survives an ordinary day.`
+                    : `Would remove ${usd(removes)} on paper. A stop this close to price is hit by normal movement whether or not the trade is right — rule 8 keeps a stop no tighter than roughly one ADR. Leave it where it is until price has travelled further.`}
+                </p>
+              </li>
+            ))}
+          </ul>
         </Panel>
       )}
 

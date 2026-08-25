@@ -76,20 +76,85 @@ export function positionRisk(p: {
  * Direction matters and is easy to invert. LONG: breakeven is entry, a stop
  * BELOW entry is the losing side, move it UP. SHORT: breakeven is entry, a
  * stop ABOVE entry is the losing side, move it DOWN.
+ *
+ * **It is only free if the new stop can survive an ordinary day.** For a long
+ * while, this reported any move on any position a cent in profit, which is
+ * arithmetic rather than advice. On SSB it recommended raising the stop to
+ * 105.64 with price at 105.80 — sixteen cents, against a $1.80 average daily
+ * range, and tighter than every one of the previous twenty daily ranges. That
+ * stop is hit by noise whether or not the trade is right, and rule 8
+ * (`stop_beyond_structure`) says a stop is never tighter than roughly one ADR.
+ *
+ * So the move is still computed, but it carries whether it is actually safe.
+ * A caller with no ADR gets `safe: null` — unknown, which is not the same as
+ * yes and must not be rendered as a recommendation.
  */
+export type StopMove = {
+  /** Where the stop would go. */
+  to: number;
+  /** Capital-at-risk this removes. */
+  removes: number;
+  /** How far the new stop sits from the current mark, in ADR. Null when no
+   *  ADR is known for the symbol. */
+  adrMultiple: number | null;
+  /** True only when the new stop clears the noise band. Null = unverifiable. */
+  safe: boolean | null;
+  reason: string;
+};
+
+/** A stop closer to price than this many ADR is inside the noise band. */
+export const NOISE_BAND_ADR = 1;
+
 export function freeStopMove(p: {
   side: "long" | "short";
   entry: number;
   stop: number | null;
   mark: number | null;
   qty: number;
-}) {
+  /** 14-day average daily range for the symbol, in dollars. */
+  adr?: number | null;
+}): StopMove | null {
   const { capitalAtRisk } = positionRisk(p);
   if (!capitalAtRisk || p.mark == null) return null;
   const dir = p.side === "long" ? 1 : -1;
   const inProfit = dir * (p.mark - p.entry) > 0;
   if (!inProfit) return null;
-  return { to: p.entry, removes: capitalAtRisk };
+
+  // Distance the new stop would sit from where price actually is. Breakeven is
+  // entry, so this is simply how far price has travelled since entry.
+  const gap = Math.abs(p.mark - p.entry);
+  const adr = p.adr ?? null;
+
+  if (adr == null || adr <= 0) {
+    return {
+      to: p.entry,
+      removes: capitalAtRisk,
+      adrMultiple: null,
+      safe: null,
+      reason:
+        "no ADR known for this symbol, so whether the breakeven stop clears " +
+        "the noise band cannot be checked — treat as unverified, not as free",
+    };
+  }
+
+  const adrMultiple = gap / adr;
+  const safe = adrMultiple >= NOISE_BAND_ADR;
+
+  return {
+    to: p.entry,
+    removes: capitalAtRisk,
+    adrMultiple,
+    safe,
+    reason: safe
+      ? `breakeven sits ${adrMultiple.toFixed(2)}x ADR below the mark — outside ` +
+        `the noise band, so it removes ${capitalAtRisk.toFixed(2)} without ` +
+        `handing the position back to a normal day's movement`
+      : `NOT free: breakeven would sit ${gap.toFixed(2)} from the mark, only ` +
+        `${adrMultiple.toFixed(2)}x the ${adr.toFixed(2)} average daily range. ` +
+        `A stop inside one day's range is hit whether or not the thesis is ` +
+        `right — rule 8 says never tighter than roughly one ADR. Price needs ` +
+        `to travel further before this move costs nothing`,
+  };
 }
 
 export function computeDerived(t: {

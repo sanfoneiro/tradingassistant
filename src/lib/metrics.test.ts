@@ -7,6 +7,7 @@ import {
   stats,
   dividendImpact,
   DIVIDEND_FLAG_PCT,
+  NOISE_BAND_ADR,
 } from "./metrics";
 
 /**
@@ -184,6 +185,76 @@ describe("freeStopMove", () => {
   it("no mark means no answer, not a default", () => {
     expect(
       freeStopMove({ side: "long", entry: 100, stop: 95, mark: null, qty: 10 }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * A move is only free if the new stop survives an ordinary day.
+ *
+ * The live case: SSB long 10 @ 105.64, mark 105.80, stop 103.93. The dashboard
+ * recommended raising the stop to breakeven — sixteen cents from price, against
+ * a $1.80 average daily range, and tighter than every one of the previous
+ * twenty daily ranges. Rule 8 says a stop is never tighter than roughly one
+ * ADR, so the app was recommending a violation of its own rule, with a dollar
+ * figure attached to make it look like a gain.
+ */
+describe("freeStopMove respects the noise band", () => {
+  const SSB = {
+    side: "long" as const,
+    entry: 105.64,
+    stop: 103.93,
+    mark: 105.8,
+    qty: 10,
+    adr: 1.8049,
+  };
+
+  it("refuses to call the SSB move free — it is 0.09x ADR", () => {
+    const m = freeStopMove(SSB)!;
+    expect(m).not.toBeNull();
+    expect(m.safe).toBe(false);
+    near(m.adrMultiple!, 0.16 / 1.8049, 0.01);
+    expect(m.reason).toMatch(/NOT free/);
+    // the arithmetic is still reported — it is the recommendation that changes
+    near(m.removes, 17.1, 0.2);
+  });
+
+  it("calls it free once price has travelled a full ADR", () => {
+    const m = freeStopMove({ ...SSB, mark: 107.5 })!;
+    expect(m.safe).toBe(true);
+    expect(m.adrMultiple).toBeGreaterThanOrEqual(NOISE_BAND_ADR);
+    expect(m.reason).toMatch(/outside\s+the noise band/);
+  });
+
+  it("says unverified rather than safe when no ADR is known", () => {
+    const m = freeStopMove({ ...SSB, adr: null })!;
+    expect(m.safe).toBeNull();
+    expect(m.adrMultiple).toBeNull();
+    expect(m.reason).toMatch(/cannot be checked|unverified/);
+  });
+
+  it("treats a zero or negative ADR as unknown, never as a pass", () => {
+    expect(freeStopMove({ ...SSB, adr: 0 })!.safe).toBeNull();
+    expect(freeStopMove({ ...SSB, adr: -1 })!.safe).toBeNull();
+  });
+
+  it("applies the same band to shorts", () => {
+    const base = {
+      side: "short" as const,
+      entry: 100,
+      stop: 105,
+      qty: 10,
+      adr: 2,
+    };
+    // 50 cents of travel against a $2 ADR is noise
+    expect(freeStopMove({ ...base, mark: 99.5 })!.safe).toBe(false);
+    // three dollars is not
+    expect(freeStopMove({ ...base, mark: 97 })!.safe).toBe(true);
+  });
+
+  it("never reports a move on a position that is not in profit, ADR or not", () => {
+    expect(
+      freeStopMove({ side: "long", entry: 100, stop: 95, mark: 99, qty: 10, adr: 0.01 }),
     ).toBeNull();
   });
 });

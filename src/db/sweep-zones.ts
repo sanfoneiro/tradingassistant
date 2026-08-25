@@ -287,6 +287,7 @@ async function main() {
     distancePct: number | null;
     nearZone: boolean;
     trend: "uptrend" | "downtrend" | "contested" | null;
+    adr: number | null;
     note: string;
   }[] = [];
 
@@ -325,6 +326,7 @@ async function main() {
           distancePct: null,
           nearZone: false,
           trend: null,
+          adr: null,
           note: `only ${daily.length} bars — insufficient history`,
         });
         console.log(`${tag} ${daily.length} bars, skipped`);
@@ -465,14 +467,25 @@ async function main() {
         });
       }
 
+      // 14-day average daily range. The app needs it to tell a free stop move
+      // from one that puts the stop inside a normal day's movement, and the
+      // bars are already here — computing it anywhere else means fetching
+      // them twice.
+      const adrWindow = settled.slice(-14);
+      const adr = adrWindow.length
+        ? adrWindow.reduce((a, b) => a + (b.h - b.l), 0) / adrWindow.length
+        : null;
+
       pass.push({
         symbol,
         distancePct: nearest === null ? null : round(nearest),
         nearZone: near,
         trend,
+        adr: adr === null ? null : round(adr),
         note:
           `${perTf[0].zones.length}D+${perTf[1].zones.length}W zones, ` +
-          `price ${price}${ma ? `, ema200 ${round(ma)}` : ""}`,
+          `price ${price}${ma ? `, ema200 ${round(ma)}` : ""}` +
+          `${adr === null ? "" : `, adr ${round(adr)}`}`,
       });
 
       console.log(
