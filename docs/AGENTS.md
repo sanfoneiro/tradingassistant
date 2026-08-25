@@ -168,32 +168,98 @@ its own — use it when an agent does something that writes nothing else, so tha
 
 ## Agent prompts
 
-### Morning Sync & Brief — 09:00 Mon–Fri
+### Morning Sync & Brief — MANUAL, on demand
+
+**Deliberately unscheduled.** Oron runs this himself when he holds positions,
+by pasting Colmex screenshots into the session. That is why `/api/state`
+reports `markSource: "manual"` rather than `chrome_broker`, and why a stale
+`asOf` is normal rather than a fault. Do not schedule it — a sync that runs on
+a timer against a flat book writes nothing useful, and one that runs without
+a screenshot has nothing to read.
 
 ```
-Open Chrome to the broker platform (already logged in) and read the account:
-balance, equity, every open position (symbol, side, qty, entry, stop, target,
-current mark), and all working orders.
+Sync the account from the Colmex screenshots Oron has pasted, then brief him.
 
-If the platform cannot be read — not logged in, page will not load, session
-expired — POST {"kind":"account_sync","degraded":true,"notes":"<why>"} and
-STOP. Do not substitute prices from web search. Do not estimate.
+If no screenshot has been provided, ASK for one. Do not open a browser, do not
+guess at the book, and do not carry forward numbers from an earlier run.
 
-Read the day's high and low for each open position and send them as
-highSinceOpen / lowSinceOpen.
+TRANSCRIBE, THEN VERIFY. Use COLMEX_PROMPT in src/lib/colmex.ts to transcribe,
+then run checkRow() on every row. Colmex publishes redundant columns and they
+are the whole point:
 
-POST the account_sync payload to $APP_URL/api/ingest.
+    Net P/L   = (current - open) x qty x direction - fee
+    SL,value  = |open - stop| x qty
+
+Any row that does not tie out within TOLERANCE (2 cents — Colmex truncates to
+the cent, so an exact 31.345 prints as 31.34) is REPORTED, not posted. Ask for
+a clearer screenshot instead of transcribing it twice and hoping.
+
+POST account_sync to $APP_URL/api/ingest with source "manual". Send the FULL
+current position list every time — a position that is absent is treated as
+closed and moved to pending_review. `fee` is positive even though Colmex shows
+it negative. `mark: null` is a valid answer for a row that cannot be read; a
+plausible guess is not.
+
+If the screenshots are unreadable or incomplete, POST
+{"kind":"account_sync","degraded":true,"notes":"<why>"} and STOP.
+
+Send highSinceOpen / lowSinceOpen for each open position — the server keeps the
+running extreme, and this is the ONLY way MAE/MFE can ever be known. It cannot
+be reconstructed after the trade closes.
 
 Then produce the brief:
 - overnight gaps and futures direction
 - any catalyst on a held or wishlisted name in the next 48h
-- for each position: distance to stop, distance to target, whether the stop
-  can now be moved to breakeven for free
-- action items, as an action_items payload — the complete current list
+- for each position: distance to stop, distance to target, and whether the stop
+  can now be moved to breakeven for free (freeStopMoves in /api/state)
+- total risk-from-mark as a percentage of the sizing base
+- action items, as an action_items payload — the COMPLETE current list
 
-Rules: verify every price against the platform. Never present a setup whose
-gates failed as actionable. Never suggest placing an order for me — produce the
-ticket and I place it.
+Rules: every price comes from the screenshot, never from web search. Never
+present a setup whose gates failed as actionable. Never suggest placing an
+order — produce the ticket and Oron places it.
+```
+
+### Universe Refresh — weekly, Sunday 18:00
+
+Reads the saved TradingView screen, which Pine cannot do. Needs a logged-in
+Chrome, so this one is genuinely local for browser reasons, not credential
+reasons.
+
+```
+Refresh the symbol universe from the saved TradingView screen.
+
+Open Chrome to TradingView (already logged in) and open the saved screener
+named "EMA 200". Read the full symbol list.
+
+If the screen cannot be opened — not logged in, page will not load, screener
+missing — POST a `run` with status "failed" and the reason, and STOP. Do not
+reconstruct the list from memory, from a previous run, or from web search. A
+short universe silently becomes a short sweep, and the names that fall off
+stop being watched without anyone noticing.
+
+Read the tickers exactly as TradingView shows them. Do not correct, expand or
+guess at a symbol — the sweep looks them up verbatim against massive.com, and a
+"corrected" ticker is a name that silently returns no data.
+
+POST to $APP_URL/api/ingest:
+
+    {"kind":"universe", "screen":"EMA 200",
+     "symbols":[...everything on the screen...],
+     "removed":[...names that were on it last week and are not now...]}
+
+Get the previous list from /api/state's screenerCoverage so `removed` is real
+rather than assumed.
+
+Then report: how many symbols, how many added, how many removed, and name the
+removals — a name leaving the screen expires its zones, which is different from
+a zone breaking, and Oron should see which ones went.
+
+Known issue, worth flagging but NOT fixing silently: the EMA-200 screen carries
+unchartable OTC foreign secondaries (DTEGF, SNEJF, ZIJMF, HNHPF, AXAHF, NVZMY)
+that eat rotation slots. Report any you see. Adding a volume floor and a
+primary-listing filter is Oron's call to make on the screen itself, not
+something to filter out here — the app should see what the screen actually says.
 ```
 
 ### Grade candidates — weekdays 17:30 IDT, after the intraday sweep
