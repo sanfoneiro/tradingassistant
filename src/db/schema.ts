@@ -413,6 +413,12 @@ export const trades = pgTable(
     mfePrice: doublePrecision("mfe_price"),
     qty: doublePrecision("qty"),
     fees: doublePrecision("fees").default(0),
+    /** Dividend that crossed the holding period, signed as its cash effect:
+     *  NEGATIVE when a short pays it, positive when a long receives it. Not
+     *  folded into `fees` — a commission and a dividend are different claims
+     *  and the Method report needs to separate them. XOM paid $10.30, which
+     *  was 69% of that trade's entire planned stop distance. */
+    dividendUsd: doublePrecision("dividend_usd"),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
 

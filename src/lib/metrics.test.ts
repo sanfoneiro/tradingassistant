@@ -5,6 +5,8 @@ import {
   computeDerived,
   riskPerShare,
   stats,
+  dividendImpact,
+  DIVIDEND_FLAG_PCT,
 } from "./metrics";
 
 /**
@@ -392,5 +394,100 @@ describe("stats", () => {
       { plUsd: null, rMultiple: null },
     ]);
     expect(s.n).toBe(1);
+  });
+});
+
+/**
+ * Dividends. The XOM short is the real case: ten shares held through the
+ * 17 Aug 2026 ex-date cost $10.30, which was 21% of the trade's loss and 69%
+ * of its entire planned stop distance.
+ */
+describe("dividends crossing the hold", () => {
+  const xom = {
+    side: "short" as const,
+    entryPlanned: 161.52,
+    stopPlanned: 163.0,
+    targetPlanned: 151.97,
+    entryActual: 161.52,
+    exitActual: 165.0,
+    qty: 10,
+    fees: 4,
+  };
+
+  it("a short PAYS it, so the loss gets bigger", () => {
+    const without = computeDerived(xom);
+    const with_ = computeDerived({ ...xom, dividendUsd: -10.3 });
+    near(without.plUsd, -38.8);
+    near(with_.plUsd, -49.1);
+    expect((with_.plUsd as number) < (without.plUsd as number)).toBe(true);
+  });
+
+  it("a long RECEIVES it, so the same magnitude moves P/L the other way", () => {
+    const long = { ...xom, side: "long" as const, stopPlanned: 160.0 };
+    const without = computeDerived(long);
+    const with_ = computeDerived({ ...long, dividendUsd: +10.3 });
+    expect((with_.plUsd as number) > (without.plUsd as number)).toBe(true);
+    near((with_.plUsd as number) - (without.plUsd as number), 10.3);
+  });
+
+  it("carries into R, because R is computed from plUsd", () => {
+    // initial risk = |161.52 - 163.00| * 10 = 14.80
+    near(computeDerived(xom).rMultiple, -38.8 / 14.8);
+    near(computeDerived({ ...xom, dividendUsd: -10.3 }).rMultiple, -49.1 / 14.8);
+  });
+
+  it("absent dividend is not the same as a zero one only when it is absent", () => {
+    // Omitting the field must behave exactly like 0 - no silent NaN.
+    expect(computeDerived(xom).plUsd).toBe(
+      computeDerived({ ...xom, dividendUsd: 0 }).plUsd,
+    );
+  });
+});
+
+describe("dividendImpact — the grading-time veto input", () => {
+  it("prices a short's dividend into BOTH sides of the ratio", () => {
+    const r = dividendImpact({
+      side: "short",
+      entry: 161.52,
+      stop: 163.0,
+      target: 151.97,
+      qty: 10,
+      dividendPerShare: 1.03,
+      fees: 4,
+    });
+    // headline R:R is 9.55/1.48 = 6.45; after the dividend and commission it is not
+    near(r.pctOfStopDistance, 1.03 / 1.48);
+    expect(r.flagged).toBe(true);
+    near(r.adjustedRR, (9.55 * 10 - 10.3 - 4) / (1.48 * 10 + 10.3 + 4));
+    expect((r.adjustedRR as number) < 6.45).toBe(true);
+  });
+
+  it("does NOT reduce a long's ratio — the dividend is received, not paid", () => {
+    const r = dividendImpact({
+      side: "long",
+      entry: 38.32,
+      stop: 37.33,
+      target: 41.3,
+      qty: 49,
+      dividendPerShare: 0.455,
+    });
+    expect(r.adjustedRR).toBeNull();
+    // but it IS a stop-placement warning: 0.455 of a 0.99 stop distance
+    near(r.pctOfStopDistance, 0.455 / 0.99);
+    expect(r.flagged).toBe(true);
+    expect(r.reason).toMatch(/resting limit/i);
+  });
+
+  it("stays quiet when the dividend is trivial against the stop", () => {
+    const r = dividendImpact({
+      side: "short",
+      entry: 100,
+      stop: 110,
+      target: 80,
+      qty: 10,
+      dividendPerShare: 0.05,
+    });
+    expect(r.pctOfStopDistance).toBeLessThan(DIVIDEND_FLAG_PCT);
+    expect(r.flagged).toBe(false);
   });
 });

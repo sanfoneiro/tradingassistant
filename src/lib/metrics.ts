@@ -101,6 +101,9 @@ export function computeDerived(t: {
   exitActual?: number | null;
   qty?: number | null;
   fees?: number | null;
+  /** Signed cash effect of any dividend crossing the hold: negative when a
+   *  short pays it. */
+  dividendUsd?: number | null;
   mfePrice?: number | null;
   maePrice?: number | null;
   openedAt?: Date | null;
@@ -114,9 +117,12 @@ export function computeDerived(t: {
   const rps = entry != null && stop != null ? riskPerShare(entry, stop) : null;
   const initialRisk = rps != null && qty != null ? rps * qty : null;
 
+  // A dividend that crossed the hold is realised money like any other. A short
+  // held through an ex-date pays it, and leaving it out reports a smaller loss
+  // than the account actually took.
   const plUsd =
     entry != null && t.exitActual != null && qty != null
-      ? dir * (t.exitActual - entry) * qty - (t.fees ?? 0)
+      ? dir * (t.exitActual - entry) * qty - (t.fees ?? 0) + (t.dividendUsd ?? 0)
       : null;
 
   const plPct =
@@ -266,3 +272,94 @@ export function stats(rows: { plUsd: number | null; rMultiple: number | null }[]
  * A 100% win rate on two trades has burned better traders than us.
  */
 export const MIN_SAMPLE = 5;
+
+/* ------------------------------------------------------------------ *
+ * Dividends at grading time
+ * ------------------------------------------------------------------ */
+
+/**
+ * What an ex-date inside the expected hold does to a setup.
+ *
+ * This is a VETO input, not an accounting entry — the accounting is
+ * `dividendUsd` on the closed trade. The point of computing it before entry
+ * is that a dividend is the rarest thing in this system: a price move whose
+ * size and date are both known in advance.
+ *
+ * The two sides are not symmetric, and treating them the same is the mistake:
+ *
+ *   SHORT — you PAY it. Straight cash cost. It widens risk and narrows
+ *   reward simultaneously, so R:R degrades from both ends. XOM's $1.03/share
+ *   was 69% of a $1.48 stop distance: the dividend alone was most of the
+ *   risk budget, and the headline 6.45 R:R was really 2.79 after it and the
+ *   commission.
+ *
+ *   LONG — you RECEIVE it, so there is no cash cost. But the price drops by
+ *   roughly the dividend on the ex-date, which walks it mechanically toward
+ *   your stop for a reason that has nothing to do with order flow. That is a
+ *   stop-placement warning, not an R:R adjustment. BIP's $0.455 was 46% of a
+ *   $0.99 stop distance — a resting limit there fills on the dividend.
+ */
+export type DividendImpact = {
+  side: "long" | "short";
+  /** Dividend as a share of the planned stop distance. The number to look at:
+   *  above ~0.25 the ex-date is a material part of the whole risk budget. */
+  pctOfStopDistance: number;
+  /** Shorts only — R:R after paying it, and after commission. Null for longs,
+   *  because a long's total return is not reduced by a dividend it receives. */
+  adjustedRR: number | null;
+  /** True when the setup needs a decision before the ex-date rather than a
+   *  resting order through it. */
+  flagged: boolean;
+  reason: string;
+};
+
+/** Above this share of the stop distance, the ex-date is a material event
+ *  rather than a detail. A quarter of the risk budget is the line. */
+export const DIVIDEND_FLAG_PCT = 0.25;
+
+export function dividendImpact(p: {
+  side: "long" | "short";
+  entry: number;
+  stop: number;
+  target: number;
+  qty: number;
+  /** Per share, always positive — direction comes from `side`. */
+  dividendPerShare: number;
+  /** Round-trip commission, if it should be included in the adjusted R:R. */
+  fees?: number;
+}): DividendImpact {
+  const riskPerShare = Math.abs(p.entry - p.stop);
+  const rewardPerShare = Math.abs(p.target - p.entry);
+  const d = Math.abs(p.dividendPerShare);
+  const pctOfStopDistance = riskPerShare > 0 ? d / riskPerShare : Infinity;
+  const flagged = pctOfStopDistance >= DIVIDEND_FLAG_PCT;
+
+  if (p.side === "long") {
+    return {
+      side: "long",
+      pctOfStopDistance,
+      adjustedRR: null,
+      flagged,
+      reason: flagged
+        ? `ex-date drop of ${d.toFixed(4)}/share is ${(pctOfStopDistance * 100).toFixed(0)}% of the ` +
+          `${riskPerShare.toFixed(4)} stop distance — a resting limit at the zone edge fills on the ` +
+          `dividend, not on demand. Decide before the ex-date.`
+        : `ex-date drop is ${(pctOfStopDistance * 100).toFixed(0)}% of the stop distance — not material.`,
+    };
+  }
+
+  // Short: paid, so it hits risk and reward at the same time.
+  const fees = p.fees ?? 0;
+  const riskUsd = riskPerShare * p.qty + d * p.qty + fees;
+  const rewardUsd = rewardPerShare * p.qty - d * p.qty - fees;
+  return {
+    side: "short",
+    pctOfStopDistance,
+    adjustedRR: riskUsd > 0 ? rewardUsd / riskUsd : null,
+    flagged,
+    reason: flagged
+      ? `short pays ${d.toFixed(4)}/share, ${(pctOfStopDistance * 100).toFixed(0)}% of the ` +
+        `${riskPerShare.toFixed(4)} stop distance — it is a cost on both sides of the ratio.`
+      : `short pays ${d.toFixed(4)}/share, ${(pctOfStopDistance * 100).toFixed(0)}% of the stop distance.`,
+  };
+}
