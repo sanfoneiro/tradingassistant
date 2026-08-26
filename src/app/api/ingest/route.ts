@@ -19,6 +19,7 @@ import { ingestPayload } from "@/lib/ingest-schema";
 import { checkIngestToken } from "@/lib/auth";
 import { positionRisk } from "@/lib/metrics";
 import { TRIGGER_BAND_PCT, triggerStamp } from "@/lib/funnel";
+import { matchActionItem, unraisedItems } from "@/lib/action-items";
 
 export const dynamic = "force-dynamic";
 
@@ -666,10 +667,12 @@ async function handleActionItems(p: Extract<P, { kind: "action_items" }>) {
   let repeated = 0;
   let created = 0;
 
+  const matchedIds = new Set<number>();
+
   for (const item of p.items) {
-    const prev = open.find(
-      (o) => o.symbol === (item.symbol ?? null) && o.kind === item.kind,
-    );
+    const m = matchActionItem(open, item);
+    const prev = m.type === "new" ? null : m.item;
+    if (prev) matchedIds.add(prev.id);
 
     if (prev) {
       // Repeat. Price what waiting has cost since the first raise —
@@ -682,6 +685,9 @@ async function handleActionItems(p: Extract<P, { kind: "action_items" }>) {
       await db
         .update(actionItems)
         .set({
+          // The kind follows whatever the agent now calls it; the history
+          // does not restart because of it.
+          kind: item.kind,
           text: item.text,
           rationale: item.rationale ?? prev.rationale,
           timesRepeated: prev.timesRepeated + 1,
@@ -704,15 +710,27 @@ async function handleActionItems(p: Extract<P, { kind: "action_items" }>) {
     }
   }
 
-  // Items no longer raised are considered resolved.
-  const stillRaised = new Set(p.items.map((i) => `${i.kind}:${i.symbol ?? ""}`));
-  const resolved = open.filter(
-    (o) => !stillRaised.has(`${o.kind}:${o.symbol ?? ""}`),
-  );
+  /**
+   * Anything not matched by ANY route is no longer being raised.
+   *
+   * Keyed on the ids actually matched, not on `kind:symbol`. The old version
+   * rebuilt the key from the payload, so a row whose kind had just been
+   * carried forward was closed again in the same request — the carry-forward
+   * and the resolve fought each other.
+   *
+   * `no_longer_raised` is as far as the record can honestly go. The agent
+   * stopped mentioning it; whether Oron acted is not something this endpoint
+   * can know, and "done" implied it did.
+   */
+  const resolved = unraisedItems(open, matchedIds);
   for (const r of resolved) {
     await db
       .update(actionItems)
-      .set({ status: "done", resolvedAt: new Date() })
+      .set({
+        status: "done",
+        resolution: "no_longer_raised",
+        resolvedAt: new Date(),
+      })
       .where(eq(actionItems.id, r.id));
   }
 

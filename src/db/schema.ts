@@ -528,6 +528,14 @@ export const journal = pgTable("journal", {
  * Action items — with the cost-of-delay counter
  * ------------------------------------------------------------------ */
 
+/** Why an action item stopped being open. "done" alone could not distinguish
+ *  a recommendation Oron acted on from one that was silently retracted. */
+export const actionItemResolutionEnum = pgEnum("action_item_resolution", [
+  "no_longer_raised",
+  "superseded",
+  "retracted",
+]);
+
 export const actionItems = pgTable("action_items", {
   id: serial("id").primaryKey(),
   kind: text("kind").notNull(), // close | move_stop | adjust_tp | open | review
@@ -549,6 +557,11 @@ export const actionItems = pgTable("action_items", {
   costOfDelayUsd: doublePrecision("cost_of_delay_usd").default(0),
 
   status: text("status").default("open").notNull(), // open | done | dropped
+  /** WHY it closed. "done" alone could not tell a recommendation Oron acted
+   *  on from one that was silently retracted — and on 2026-08-26 a wrong
+   *  "move the stop to breakeven" was recorded as done the morning after it
+   *  was withdrawn as bad advice. */
+  resolution: actionItemResolutionEnum("resolution"),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });
 

@@ -333,6 +333,16 @@ adjust_tp | open | review. Each carries symbol, text, rationale, mark, qty.
 Send the COMPLETE current list. Items you stop sending are marked resolved;
 items repeated accrue their cost of delay automatically.
 
+**`kind` is part of an item's identity — keep it stable across runs for the
+same recommendation.** Two agents describing one thing differently used to
+close the old row and open a new one, resetting `firstRaisedAt` and
+`timesRepeated`: SSB crossed three rows in twenty-six hours on 2026-08-26
+(move_stop -> review -> move_stop) and every one of them read "raised once".
+The matcher now carries history across a kind change when exactly one item is
+open for that symbol, but it CANNOT when two are — "close it" and "move the
+stop" are different instructions and must not be merged. Pick a kind and stay
+with it.
+
 ============ STANDING RULES ============
 - Every account number comes from the screenshot. Nothing else.
 - Never present a setup whose gates failed as actionable.
