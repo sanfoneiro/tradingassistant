@@ -580,3 +580,101 @@ export function positionSize(p: {
         `concentration ceiling leave no window — skip it rather than take it smaller`,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Stop placement — rule 8, both halves
+ * ------------------------------------------------------------------ */
+
+export type StopCheck = {
+  /** Both required halves hold. */
+  ok: boolean;
+  /** Past the structural level, in the losing direction. */
+  beyondStructure: boolean;
+  /** At least one average daily range from entry. */
+  clearsNoiseBand: boolean;
+  /** Sitting exactly on a whole or half dollar. Not a failure on its own —
+   *  a real level can land there — but a stop CHOSEN for its roundness is
+   *  the thing the rule warns about, so it is surfaced. */
+  onRoundNumber: boolean;
+  adrMultiple: number | null;
+  distanceBeyondStructure: number;
+  /** Where the stop would have to sit to satisfy both: whichever constraint
+   *  is further from entry wins. */
+  suggested: number | null;
+  reason: string;
+};
+
+/**
+ * Rule 8 has three clauses and only one of them was ever checked.
+ *
+ *   "The stop goes BEYOND A STRUCTURAL FEATURE, not a round number, and no
+ *    tighter than roughly ONE AVERAGE DAILY RANGE."
+ *
+ * The grader was enforcing the ADR floor alone. That is the half that catches
+ * a stop tucked inside the zone box, but it says nothing about a stop parked
+ * in open air a long way from any level — which satisfies the arithmetic and
+ * invalidates nothing.
+ *
+ * Both must hold at once, and they do not collapse into each other: for a
+ * wide zone the structure is further away, for a tight one the noise band is.
+ * The correct stop is whichever sits FURTHER from entry, not either alone.
+ */
+export function checkStopPlacement(p: {
+  side: "long" | "short";
+  entry: number;
+  stop: number;
+  /** The distal edge of the zone, or the swing the thesis rests on. */
+  structuralLevel: number | null;
+  adr: number | null;
+}): StopCheck {
+  const dir = p.side === "long" ? 1 : -1;
+  const risk = Math.abs(p.entry - p.stop);
+  const adrMultiple = p.adr && p.adr > 0 ? risk / p.adr : null;
+  const clearsNoiseBand = adrMultiple == null ? false : adrMultiple >= NOISE_BAND_ADR;
+
+  // Beyond means further from entry than the level, in the losing direction.
+  const distanceBeyondStructure =
+    p.structuralLevel == null ? 0 : dir * (p.structuralLevel - p.stop);
+  const beyondStructure =
+    p.structuralLevel == null ? false : distanceBeyondStructure > 0;
+
+  const onRoundNumber = Math.abs((p.stop * 100) % 50) < 0.001;
+
+  const byNoise = p.adr && p.adr > 0 ? p.entry - dir * p.adr : null;
+  const suggested =
+    p.structuralLevel == null && byNoise == null
+      ? null
+      : p.side === "long"
+        ? Math.min(...[p.structuralLevel, byNoise].filter((x): x is number => x != null))
+        : Math.max(...[p.structuralLevel, byNoise].filter((x): x is number => x != null));
+
+  const missing: string[] = [];
+  if (!beyondStructure)
+    missing.push(
+      p.structuralLevel == null
+        ? "no structural level supplied, so 'beyond structure' cannot be checked"
+        : `stop ${p.stop} is not beyond the ${p.structuralLevel} level`,
+    );
+  if (!clearsNoiseBand)
+    missing.push(
+      p.adr == null
+        ? "no ADR, so the noise band cannot be checked"
+        : `${risk.toFixed(4)} is ${adrMultiple!.toFixed(2)}x ADR — inside one day's range`,
+    );
+
+  const ok = beyondStructure && clearsNoiseBand;
+  return {
+    ok,
+    beyondStructure,
+    clearsNoiseBand,
+    onRoundNumber,
+    adrMultiple,
+    distanceBeyondStructure,
+    suggested: suggested == null ? null : Number(suggested.toFixed(4)),
+    reason: ok
+      ? `${distanceBeyondStructure.toFixed(4)} beyond structure AND ${adrMultiple!.toFixed(2)}x ADR` +
+        (onRoundNumber ? " — but it sits on a round number, check it is a real level" : "")
+      : `FAILS rule 8: ${missing.join("; ")}` +
+        (suggested != null ? `. Both halves hold at ${suggested.toFixed(4)}` : ""),
+  };
+}

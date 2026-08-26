@@ -379,6 +379,12 @@ export default async function AccountPage() {
                   <th className="px-2 py-2 text-right">Entry</th>
                   <th className="px-2 py-2 text-right">Mark</th>
                   <th className="px-2 py-2 text-right">Stop</th>
+                  <th
+                    className="px-2 py-2 text-right"
+                    title="The planned first target, and how far price still has to travel to reach it"
+                  >
+                    Target
+                  </th>
                   <th className="px-2 py-2 text-right">P/L</th>
                   <th className="px-2 py-2 text-right" title="What is lost if the stop fills today, from the current mark">
                     Risk now
@@ -407,6 +413,27 @@ export default async function AccountPage() {
                     </td>
                     <td className="tnum px-2 py-2 text-right text-dim">
                       {p.stop != null ? `$${p.stop.toFixed(2)}` : "—"}
+                    </td>
+                    {/* The target was stored all along and never shown, so
+                        "how far to the target" was a question the page could
+                        not answer about a position it was tracking. */}
+                    <td className="tnum px-2 py-2 text-right text-dim">
+                      {p.target == null ? (
+                        <span className="text-faint">no target</span>
+                      ) : (
+                        <>
+                          ${p.target.toFixed(2)}
+                          {p.mark != null && (
+                            <span className="ml-1 text-[11px] text-faint">
+                              {(
+                                ((p.target - p.mark) / p.mark) *
+                                (p.side === "long" ? 100 : -100)
+                              ).toFixed(1)}
+                              %
+                            </span>
+                          )}
+                        </>
+                      )}
                     </td>
                     <td
                       className={`tnum px-2 py-2 text-right ${(p.pl ?? 0) >= 0 ? "text-up" : "text-down"}`}

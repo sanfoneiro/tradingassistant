@@ -11,6 +11,7 @@ import {
   positionSize,
   CONCENTRATION_CAP,
   CONCENTRATION_CAP_APLUS,
+  checkStopPlacement,
 } from "./metrics";
 
 /**
@@ -647,5 +648,88 @@ describe("positionSize — risk, concentration and the fee floor together", () =
     expect(positionSize({ entry: 100, stop: 100, target: 110, base: BASE }).viable).toBe(false);
     expect(positionSize({ entry: 100, stop: 95, target: 100, base: BASE }).viable).toBe(false);
     expect(positionSize({ entry: 100, stop: 95, target: 110, base: 0 }).viable).toBe(false);
+  });
+});
+
+/**
+ * Rule 8 has two required halves and only one was ever checked:
+ *
+ *   "beyond a structural feature ... and no tighter than roughly one ADR"
+ *
+ * The ADR floor alone catches a stop tucked inside the zone. It says nothing
+ * about one parked in open air far from any level, which satisfies the
+ * arithmetic and invalidates nothing.
+ */
+describe("checkStopPlacement — both halves of rule 8", () => {
+  /** SONY as posted: 23.37 against a 23.50 zone low and a 0.3071 ADR. */
+  const SONY = {
+    side: "long" as const,
+    entry: 23.68,
+    stop: 23.37,
+    structuralLevel: 23.5,
+    adr: 0.3071,
+  };
+
+  it("passes SONY — beyond the zone AND outside the noise band", () => {
+    const c = checkStopPlacement(SONY);
+    expect(c.beyondStructure).toBe(true);
+    expect(c.clearsNoiseBand).toBe(true);
+    expect(c.ok).toBe(true);
+    near(c.distanceBeyondStructure, 0.13);
+    near(c.adrMultiple!, 1.009, 0.01);
+  });
+
+  it("fails a stop that clears the ADR floor but sits inside the zone", () => {
+    // a wide zone: 1 ADR is not enough to get past it
+    const c = checkStopPlacement({ ...SONY, structuralLevel: 23.2, stop: 23.37 });
+    expect(c.clearsNoiseBand).toBe(true);
+    expect(c.beyondStructure).toBe(false);
+    expect(c.ok).toBe(false);
+    expect(c.reason).toMatch(/not beyond/);
+  });
+
+  it("fails a stop beyond the zone but inside one day's range", () => {
+    const c = checkStopPlacement({ ...SONY, stop: 23.49, adr: 0.8 });
+    expect(c.beyondStructure).toBe(true);
+    expect(c.clearsNoiseBand).toBe(false);
+    expect(c.ok).toBe(false);
+    expect(c.reason).toMatch(/inside one day/);
+  });
+
+  it("suggests whichever constraint sits further from entry", () => {
+    // wide zone wins
+    near(checkStopPlacement({ ...SONY, structuralLevel: 23.0 }).suggested!, 23.0);
+    // tight zone, so the noise band wins
+    near(checkStopPlacement({ ...SONY, structuralLevel: 23.6 }).suggested!, 23.3729, 0.001);
+  });
+
+  it("cannot claim a pass with a missing input", () => {
+    expect(checkStopPlacement({ ...SONY, adr: null }).ok).toBe(false);
+    expect(checkStopPlacement({ ...SONY, structuralLevel: null }).ok).toBe(false);
+    expect(checkStopPlacement({ ...SONY, adr: null }).reason).toMatch(/cannot be checked/);
+  });
+
+  it("flags a round number without failing it outright", () => {
+    const c = checkStopPlacement({ ...SONY, stop: 23.0, structuralLevel: 23.5 });
+    expect(c.onRoundNumber).toBe(true);
+    expect(c.ok).toBe(true); // a real level can land on a round number
+    expect(c.reason).toMatch(/round number/);
+  });
+
+  it("runs the same way for a short, with the levels above", () => {
+    const c = checkStopPlacement({
+      side: "short",
+      entry: 100,
+      stop: 104,
+      structuralLevel: 102,
+      adr: 3,
+    });
+    expect(c.beyondStructure).toBe(true);
+    expect(c.clearsNoiseBand).toBe(true);
+    expect(c.ok).toBe(true);
+    // and a short stop below its structure fails
+    expect(
+      checkStopPlacement({ side: "short", entry: 100, stop: 101, structuralLevel: 102, adr: 3 }).ok,
+    ).toBe(false);
   });
 });
