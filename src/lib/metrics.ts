@@ -428,3 +428,155 @@ export function dividendImpact(p: {
       : `short pays ${d.toFixed(4)}/share, ${(pctOfStopDistance * 100).toFixed(0)}% of the stop distance.`,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Position sizing — three constraints that interact
+ * ------------------------------------------------------------------ */
+
+/** Most of the account that may sit in one name. */
+export const CONCENTRATION_CAP = 0.15;
+/** An A+ may stretch to this, and only when 15% will not carry the trade. */
+export const CONCENTRATION_CAP_APLUS = 0.2;
+
+export type Sizing = {
+  shares: number;
+  sizeUsd: number;
+  riskUsd: number;
+  riskPctOfBase: number;
+  /** Reward-to-risk at THIS share count, after the round trip. The number
+   *  that decides whether the trade is worth taking. */
+  netRR: number | null;
+  /** Fewest shares that still clear the R:R gate net of fees. Null when no
+   *  size can, which happens whenever reward <= minRR x risk. */
+  minShares: number | null;
+  maxSharesByConcentration: number;
+  sharesByRisk: number;
+  boundBy: "risk" | "concentration";
+  viable: boolean;
+  reason: string;
+};
+
+/**
+ * Can this trade be sized at all?
+ *
+ * Three limits interact, and checking them in isolation misses the case that
+ * matters:
+ *
+ *   1. RISK — 1% of the base is the most that may be lost.
+ *   2. CONCENTRATION — a cap on how much capital sits in one name. A tight
+ *      stop demands a huge position for a small risk: SONY wanted 245 shares,
+ *      76% of the account, to risk $76.
+ *   3. R:R NET OF FEES — and this is the one that closes the loop. Cutting
+ *      size to respect the cap does NOT leave the ratio alone. Commission is
+ *      $2 an order whatever the size, so fewer shares means the same $4
+ *      against a smaller reward, and the net ratio falls. A trade that was
+ *      3.9:1 at full size can drop under 2:1 once it is cut to fit.
+ *
+ * So the viable sizes are a WINDOW, not a ceiling: at least `minShares` for
+ * the ratio to survive the commission, at most `maxSharesByConcentration` for
+ * the position to be sane. When the window is empty there is no size that
+ * satisfies both, and the honest answer is that the trade is not takeable —
+ * not that it should be taken smaller.
+ */
+export function positionSize(p: {
+  entry: number;
+  stop: number;
+  target: number;
+  base: number;
+  riskPct?: number;
+  concentrationPct?: number;
+  fees?: number;
+  minRR?: number;
+}): Sizing {
+  const riskPct = p.riskPct ?? 0.01;
+  const cap = p.concentrationPct ?? CONCENTRATION_CAP;
+  const fees = p.fees ?? 4;
+  const minRR = p.minRR ?? 2;
+
+  const riskPerShare = Math.abs(p.entry - p.stop);
+  const rewardPerShare = Math.abs(p.target - p.entry);
+
+  const dead = (reason: string): Sizing => ({
+    shares: 0,
+    sizeUsd: 0,
+    riskUsd: 0,
+    riskPctOfBase: 0,
+    netRR: null,
+    minShares: null,
+    maxSharesByConcentration: 0,
+    sharesByRisk: 0,
+    boundBy: "risk",
+    viable: false,
+    reason,
+  });
+
+  if (!(riskPerShare > 0)) return dead("stop is at the entry — no risk per share to size against");
+  if (!(rewardPerShare > 0)) return dead("target is at the entry — nothing to win");
+  if (!(p.base > 0)) return dead("no sizing base");
+
+  const sharesByRisk = Math.floor((p.base * riskPct) / riskPerShare);
+  const maxByConc = Math.floor((p.base * cap) / p.entry);
+  const shares = Math.min(sharesByRisk, maxByConc);
+  const boundBy: "risk" | "concentration" =
+    sharesByRisk <= maxByConc ? "risk" : "concentration";
+
+  // n(reward - k*risk) >= fees(1 + k)
+  const denom = rewardPerShare - minRR * riskPerShare;
+  const minShares =
+    denom > 0 ? Math.ceil((fees * (1 + minRR)) / denom) : null;
+
+  const netAt = (n: number) =>
+    n > 0 ? (n * rewardPerShare - fees) / (n * riskPerShare + fees) : null;
+
+  if (shares < 1)
+    return {
+      ...dead(
+        `${maxByConc} share(s) fit inside the ${(cap * 100).toFixed(0)}% cap — the position cannot be opened at all`,
+      ),
+      maxSharesByConcentration: maxByConc,
+      sharesByRisk,
+      minShares,
+    };
+
+  if (minShares == null)
+    return {
+      shares,
+      sizeUsd: shares * p.entry,
+      riskUsd: shares * riskPerShare,
+      riskPctOfBase: (shares * riskPerShare) / p.base,
+      netRR: netAt(shares),
+      minShares,
+      maxSharesByConcentration: maxByConc,
+      sharesByRisk,
+      boundBy,
+      viable: false,
+      reason:
+        `reward ${rewardPerShare.toFixed(4)} is not more than ${minRR}x the ` +
+        `${riskPerShare.toFixed(4)} risk, so NO size reaches ${minRR}:1 once the ` +
+        `$${fees.toFixed(2)} round trip is paid — the ratio approaches ${minRR} from below`,
+    };
+
+  const netRR = netAt(shares);
+  const viable = shares >= minShares;
+
+  return {
+    shares,
+    sizeUsd: shares * p.entry,
+    riskUsd: shares * riskPerShare,
+    riskPctOfBase: (shares * riskPerShare) / p.base,
+    netRR,
+    minShares,
+    maxSharesByConcentration: maxByConc,
+    sharesByRisk,
+    boundBy,
+    viable,
+    reason: viable
+      ? `${shares} shares, bound by ${boundBy} — $${(shares * p.entry).toFixed(0)} ` +
+        `(${(((shares * p.entry) / p.base) * 100).toFixed(1)}% of base), risking ` +
+        `$${(shares * riskPerShare).toFixed(2)}, net ${netRR!.toFixed(2)}:1`
+      : `NOT VIABLE: the ${(cap * 100).toFixed(0)}% cap allows ${maxByConc} shares but ` +
+        `${minShares} are needed for ${minRR}:1 net of the $${fees.toFixed(2)} round trip. ` +
+        `At ${shares} shares the ratio is ${netRR!.toFixed(2)}:1. The fee floor and the ` +
+        `concentration ceiling leave no window — skip it rather than take it smaller`,
+  };
+}

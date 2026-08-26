@@ -8,6 +8,9 @@ import {
   dividendImpact,
   DIVIDEND_FLAG_PCT,
   NOISE_BAND_ADR,
+  positionSize,
+  CONCENTRATION_CAP,
+  CONCENTRATION_CAP_APLUS,
 } from "./metrics";
 
 /**
@@ -560,5 +563,89 @@ describe("dividendImpact — the grading-time veto input", () => {
     });
     expect(r.pctOfStopDistance).toBeLessThan(DIVIDEND_FLAG_PCT);
     expect(r.flagged).toBe(false);
+  });
+});
+
+/**
+ * Sizing has three limits and they interact. Checking them one at a time
+ * misses the case that matters: cutting size to respect the concentration cap
+ * does NOT leave the ratio alone, because the $4 round trip is fixed.
+ */
+describe("positionSize — risk, concentration and the fee floor together", () => {
+  const BASE = 7624.5;
+
+  /** SONY as the grader posted it: a very tight stop on a cheap share. */
+  const SONY = { entry: 23.68, stop: 23.37, target: 24.9, base: BASE };
+
+  it("the risk rule alone demands three quarters of the account", () => {
+    const s = positionSize({ ...SONY, concentrationPct: 1 });
+    expect(s.sharesByRisk).toBe(245);
+    near((245 * 23.68) / BASE, 0.76, 0.01);
+  });
+
+  it("the cap binds, and the trade is still viable at the smaller size", () => {
+    const s = positionSize(SONY);
+    expect(s.boundBy).toBe("concentration");
+    expect(s.shares).toBe(48);
+    expect(s.viable).toBe(true);
+    // cutting from 245 to 48 does not break the ratio here — it improves per share
+    near(s.netRR!, (48 * 1.22 - 4) / (48 * 0.31 + 4), 0.01);
+    expect(s.netRR!).toBeGreaterThan(2);
+    // and the risk taken is far below the 1% budget, which is the real cost
+    expect(s.riskPctOfBase).toBeLessThan(0.003);
+  });
+
+  it("names the window: fewest shares for the ratio, most for the cap", () => {
+    const s = positionSize(SONY);
+    // n(reward - 2*risk) >= fees*3  ->  n >= 12 / (1.22 - 0.62) = 20
+    expect(s.minShares).toBe(20);
+    expect(s.maxSharesByConcentration).toBe(48);
+    expect(s.shares).toBeGreaterThanOrEqual(s.minShares!);
+  });
+
+  it("refuses when the fee floor is above the concentration ceiling", () => {
+    // an expensive share with a tight stop: the cap allows very few, and few
+    // shares cannot carry a $4 round trip at 2:1
+    const s = positionSize({
+      entry: 400,
+      stop: 396,
+      target: 409,
+      base: BASE,
+    });
+    expect(s.maxSharesByConcentration).toBe(2);
+    expect(s.minShares).toBeGreaterThan(2);
+    expect(s.viable).toBe(false);
+    expect(s.reason).toMatch(/no window|NOT VIABLE/i);
+  });
+
+  it("a gross-exactly-2R target is refused at every size", () => {
+    // reward is exactly 2x risk, so the net ratio approaches 2 from below
+    const s = positionSize({ entry: 100, stop: 99, target: 102, base: BASE });
+    expect(s.minShares).toBeNull();
+    expect(s.viable).toBe(false);
+    expect(s.reason).toMatch(/NO size reaches/);
+  });
+
+  it("refuses outright when not even one share fits the cap", () => {
+    const s = positionSize({ entry: 5000, stop: 4900, target: 5300, base: BASE });
+    expect(s.shares).toBe(0);
+    expect(s.viable).toBe(false);
+    expect(s.reason).toMatch(/cannot be opened/);
+  });
+
+  it("A+ may stretch to 20%, and it can turn a refusal into a trade", () => {
+    const tight = { entry: 300, stop: 297, target: 309, base: BASE };
+    const at15 = positionSize({ ...tight, concentrationPct: CONCENTRATION_CAP });
+    const at20 = positionSize({ ...tight, concentrationPct: CONCENTRATION_CAP_APLUS });
+    expect(at20.maxSharesByConcentration).toBeGreaterThan(
+      at15.maxSharesByConcentration,
+    );
+    expect(CONCENTRATION_CAP).toBeLessThan(CONCENTRATION_CAP_APLUS);
+  });
+
+  it("bad levels are refused rather than sized", () => {
+    expect(positionSize({ entry: 100, stop: 100, target: 110, base: BASE }).viable).toBe(false);
+    expect(positionSize({ entry: 100, stop: 95, target: 100, base: BASE }).viable).toBe(false);
+    expect(positionSize({ entry: 100, stop: 95, target: 110, base: 0 }).viable).toBe(false);
   });
 });
