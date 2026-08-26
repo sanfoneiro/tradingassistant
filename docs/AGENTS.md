@@ -165,7 +165,10 @@ automatically.
 
 ### `action_items`
 
-Send the complete current list every run. Matching on `(kind, symbol)`:
+Send the complete current list every run. Matched on `(symbol, kind)` first,
+and when that finds nothing, on symbol alone **provided exactly one item is
+open for it** — so relabelling a recommendation carries its history instead of
+starting a new row:
 
 - already open → `timesRepeated += 1` and `costOfDelayUsd` recomputed against
   `markAtFirstRaise`
