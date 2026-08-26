@@ -336,6 +336,32 @@ adjust_tp | open | review. Each carries symbol, text, rationale, mark, qty.
 Send the COMPLETE current list. Items you stop sending are marked resolved;
 items repeated accrue their cost of delay automatically.
 
+**An action item is something to DO. If there is nothing to do, send nothing.**
+
+An empty list is a valid and common answer. A list that fills up with
+observations is a list nobody reads, and then the cost-of-delay counter is
+measuring a screen no one looks at.
+
+Four tests every item must pass before it is sent:
+
+- **It names a specific change and its number.** "Raise the SSB stop to
+  104.90" is an action. "Decide on the 158.77 target" is homework — say what
+  to change it to, or do not raise it.
+- **It is not a request to keep doing nothing.** "Hold the stop, do NOT move
+  it to breakeven" was raised on 2026-08-26 about a stop Oron was not moving.
+  Telling someone not to do a thing they are not doing spends a slot meant for
+  work. The only exception is when something is genuinely in flight — a
+  resting order, a stop already changed — and then the item is "cancel it",
+  which is an action.
+- **A retraction is a one-time correction, not a standing item.** When earlier
+  advice turns out to be wrong, close the old item with
+  `resolution: "retracted"` and say so in the report. Do not open a new item
+  whose content is "ignore the last one" — it will still be sitting there in a
+  week.
+- **It is still true.** Repeating an item is expensive: it accrues cost of
+  delay against the first raise. Only send it again if it remains undone AND
+  remains right.
+
 **`kind` is part of an item's identity — keep it stable across runs for the
 same recommendation.** Two agents describing one thing differently used to
 close the old row and open a new one, resetting `firstRaisedAt` and
