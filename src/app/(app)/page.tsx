@@ -105,8 +105,12 @@ export default async function AccountPage() {
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.removes - a.removes);
 
+  // Only a move that is genuinely free is shown. A panel explaining why NOT
+  // to move a stop is the same failure as an action item saying "do not do
+  // the thing you are not doing" — it spends attention and asks for nothing.
+  // The `safe` flag still travels in /api/state so agents do not recommend
+  // what the page declines to show.
   const freeMoves = allMoves.filter((m) => m.safe === true);
-  const heldMoves = allMoves.filter((m) => m.safe !== true);
   const freeTotal = freeMoves.reduce((a, m) => a + m.removes, 0);
 
   return (
@@ -306,39 +310,6 @@ export default async function AccountPage() {
             removes the possible loss; the open profit above the new stop is
             still given back if it fills.
           </p>
-        </Panel>
-      )}
-
-      {heldMoves.length > 0 && (
-        <Panel title="Breakeven moves that are not free yet">
-          <ul className="space-y-2">
-            {heldMoves.map(({ p, to, removes, safe, adrMultiple }) => (
-              <li
-                key={p.id}
-                className="rounded-lg border border-line bg-panel2 px-3 py-2 text-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <span>
-                    <b>{p.symbol}</b>{" "}
-                    <span className="text-dim">
-                      breakeven would be{" "}
-                      <span className="tnum">${to.toFixed(2)}</span>
-                    </span>
-                  </span>
-                  <Badge tone={safe === null ? "neutral" : "warn"}>
-                    {safe === null
-                      ? "no ADR — unverified"
-                      : `${adrMultiple?.toFixed(2)}× ADR — inside the noise band`}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-xs text-faint">
-                  {safe === null
-                    ? `Would remove ${usd(removes)}, but without an average daily range for ${p.symbol} there is no way to tell whether that stop survives an ordinary day.`
-                    : `Would remove ${usd(removes)} on paper. A stop this close to price is hit by normal movement whether or not the trade is right — rule 8 keeps a stop no tighter than roughly one ADR. Leave it where it is until price has travelled further.`}
-                </p>
-              </li>
-            ))}
-          </ul>
         </Panel>
       )}
 
