@@ -688,6 +688,9 @@ async function handleActionItems(p: Extract<P, { kind: "action_items" }>) {
           // The kind follows whatever the agent now calls it; the history
           // does not restart because of it.
           kind: item.kind,
+          // Adopt a key the moment an agent starts supplying one, so the
+          // next run matches on assertion rather than on a guess.
+          key: item.key ?? prev.key ?? null,
           text: item.text,
           rationale: item.rationale ?? prev.rationale,
           timesRepeated: prev.timesRepeated + 1,
@@ -700,6 +703,7 @@ async function handleActionItems(p: Extract<P, { kind: "action_items" }>) {
       await db.insert(actionItems).values({
         kind: item.kind,
         symbol: item.symbol ?? null,
+        key: item.key ?? null,
         text: item.text,
         rationale: item.rationale ?? null,
         markAtFirstRaise: item.mark ?? null,

@@ -540,6 +540,10 @@ export const actionItems = pgTable("action_items", {
   id: serial("id").primaryKey(),
   kind: text("kind").notNull(), // close | move_stop | adjust_tp | open | review
   symbol: text("symbol"),
+  /** Agent-supplied stable identity — `ssb-hold-stop`, `cbre-concentration`.
+   *  Matched before anything else. Inferring identity from (symbol, kind)
+   *  lost history; inferring it from symbol alone merged unrelated items. */
+  key: text("key"),
   text: text("text").notNull(),
   rationale: text("rationale"),
 

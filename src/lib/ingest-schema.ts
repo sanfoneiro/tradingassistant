@@ -201,6 +201,12 @@ export const actionItemIn = z.object({
     z.object({
       kind: z.string(), // close | move_stop | adjust_tp | open | review
       symbol: z.string().nullable().optional(),
+      /** A short slug the agent controls, stable across runs for the SAME
+       *  recommendation — `ssb-hold-stop`, `cbre-concentration`. Supplying it
+       *  makes identity an assertion instead of a guess, which is what the
+       *  server got wrong twice. Without it the server falls back to
+       *  (symbol, kind), then to a text-similarity check. */
+      key: z.string().nullable().optional(),
       text: z.string(),
       rationale: z.string().nullable().optional(),
       /** Current mark, used to price the cost of delay on repeats. */

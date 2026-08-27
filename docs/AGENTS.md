@@ -362,6 +362,23 @@ Four tests every item must pass before it is sent:
   delay against the first raise. Only send it again if it remains undone AND
   remains right.
 
+**Supply a `key` on every item.** A short slug you control, stable across runs
+for the SAME recommendation — `ssb-hold-stop`, `cbre-concentration`,
+`yumc-cancel-limit`. It is matched before anything else, and it turns identity
+from something the server guesses into something you assert.
+
+That guessing failed twice in two days. Matching on `(symbol, kind)` lost SSB's
+history three times when two agents labelled one recommendation differently.
+Falling back to symbol alone then MERGED two unrelated CBRE items — a target
+concern and a concentration breach — because one open item per symbol is the
+normal case, not an edge. The merged row described concentration, claimed two
+raises, and dated its cost of delay from the target concern.
+
+Without a key the server falls back to `(symbol, kind)`, then to a
+text-similarity check, and opens a new row when the body has changed subject.
+That fallback works, but it is a guess and it will occasionally be wrong. The
+key is not.
+
 **`kind` is part of an item's identity — keep it stable across runs for the
 same recommendation.** Two agents describing one thing differently used to
 close the old row and open a new one, resetting `firstRaisedAt` and
