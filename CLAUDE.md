@@ -72,6 +72,42 @@ Two consequences the arithmetic hides:
 
 Quote R:R net of the round trip whenever size is small, and say so.
 
+**$4 before entry, $2 after — and mixing them is easy.** Colmex's "Open price"
+is a **breakeven that already contains the entry commission**, not the fill.
+So a candidate being graded has paid nothing yet and carries the full $4; an
+OPEN position priced off `Open price` has half of it baked into the entry and
+only the $2 exit remains. Charging $4 to a stored position counts the entry
+fee twice — it turned SSB's real 1.84 net into a reported 1.57 on 2026-08-27,
+in an action item and in my own arithmetic.
+
+The check that catches it: reconstruct the raw fill (`breakeven − fee/qty`),
+compute it both ways, and confirm they agree. They must, because net R:R is
+the real economic outcome. Note that **gross** R:R is NOT convention-free —
+SSB reads 2.59 from the raw fill and 2.17 from the breakeven. Net is 1.84
+either way, which is the argument for net being the number that decides.
+
+### Sizing is a gate, not an afterthought
+
+`positionSize()` checks three limits together, because the case that matters
+only appears when they interact. SONY, 2026-08-26: a $0.31 stop on a $23.68
+share meant the 1% risk rule alone asked for 245 shares — $5,802, **76% of the
+account** — to risk $76.
+
+Capping that is obvious. What is not obvious is that **capping it changes the
+R:R**, because commission is $2 an order whatever the size. Fewer shares carry
+the same $4 against a smaller reward, so a trade that clears 2:1 at full size
+can fall under it once cut to fit.
+
+So the viable sizes are a **window**: at least `minShares` for the ratio to
+survive the round trip, at most the concentration cap. **When the window is
+empty the trade is not takeable** — which is a different answer from "take it
+smaller", and an unsizeable setup should never be graded at all.
+
+The cap is **15% of the sizing base, 20% for an A_plus and only when 15% will
+not carry the trade**. Oron's numbers, chosen after research put the
+professional range at 10–20%; 15% is also what falls out of a 1% risk rule
+against a 6% portfolio-heat ceiling (six slots). Do not change it silently.
+
 ### Ranking is not grading
 
 `src/lib/rank.ts` orders *which charts are worth opening*. It cannot grade:
@@ -142,7 +178,8 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 | Zone sweep | 22:10 UTC (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions |
 | Morning Sync | **manual, on demand** | local — Colmex has no API, and Oron runs it himself when he holds positions |
 | Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
-| Grade candidates | **17:30 IDT weekdays** | local scheduled task — real judgment |
+| Grade candidates | **17:30 IDT weekdays** | local Routine — real judgment |
+| Score signals | **manual** (`npm run signals:score`) | local — replays every suggestion, taken or not |
 
 **"Local" covers two different reasons.** Morning Sync needs a logged-in
 Chrome. The grader needs only credentials — `.agent-token` and `.env` are
@@ -152,9 +189,17 @@ prices. The grader needs no browser at all: `zones.ts` replaced chart-reading
 with computed levels, and that day's run graded sixteen candidates without
 opening one. It moves to the cloud as soon as secrets can be supplied there.
 
-**The grader's prompt lives in `docs/AGENTS.md`, not in the scheduled task.**
-The task holds a pointer. Edit the doc and the next run changes; there is no
-second copy to keep in sync.
+**Every agent prompt lives in `docs/AGENTS.md`, not in the task.** Each task
+holds a three-line pointer: read CLAUDE.md, find your section, follow it. Edit
+the doc and the next run changes; there is no second copy to drift. The old
+copies had already drifted — the Morning Sync prompt in the repo described an
+agent that opens Chrome to read the broker, which it does not.
+
+**All three live in Routines** (`claude.ai/code/routines`), not in Cowork's
+Scheduled tasks. A cloud Routine also exists for the grader, **paused**: cloud
+runs cannot reach `.agent-token` or `.env`, and a test on 2026-08-26 correctly
+refused to start rather than falling back to web search. Un-pause it the day
+secrets can be attached to the environment.
 
 **Two intraday crons fire and one exits quietly.** Israel and the US change DST
 on different dates, so a fixed UTC time drifts an hour twice a year.
@@ -199,11 +244,17 @@ src/lib/zones.ts       the engine — detection, maintenance, toWeekly, nearestZ
 src/lib/rank.ts        structural ranking; NOT grading
 src/lib/funnel.ts      the two band thresholds, in one place
 src/lib/metrics.ts     R multiples, three risk figures, MAE/MFE, expectancy,
-                       dividendImpact (a short PAYS it; a long does not)
+                       dividendImpact (a short PAYS it; a long does not),
+                       positionSize (the sizing WINDOW), checkStopPlacement
+                       (both halves of rule 8), freeStopMove (needs an ADR)
+src/lib/replay.ts      replaying a signal against the bars that followed it
+src/lib/action-items.ts  which open item an incoming one is talking about
 src/lib/colmex.ts      screenshot parse + the arithmetic that verifies it
 src/lib/massive.ts     market data, throttled, retries 429
 src/db/sweep-zones.ts  the universe sweep (runs in CI)
+src/db/score-signals.ts  scores every suggestion, taken or not
 src/app/api/ingest     the only write path agents use
+src/app/(app)/guide    how the system works, for the person trading with it
 docs/AGENTS.md         payload contracts and agent prompts
 ```
 
@@ -213,30 +264,75 @@ because a long-only suite passes happily while shorts report a loss as a gain.
 
 ---
 
+## What reaches the screen
+
+**An action item is something to DO. If there is nothing to do, show nothing.**
+An empty list is a valid and common morning.
+
+Three things were removed on 2026-08-27 for failing this, and all three were
+mine:
+
+- *"Hold the stop, do NOT move it to breakeven"* — about a stop Oron was not
+  moving. Telling someone not to do a thing they are not doing spends a slot
+  meant for work.
+- Two items stating a true fact and asking for a decision (*"decide on the
+  158.77 target"*). That is homework. Name the change and the number, or do
+  not raise it.
+- A whole panel explaining why a stop move was **not** free. The fix for a bad
+  recommendation is to stop making it, not to argue the refusal on screen.
+
+The counter behind action items exists so *"close NKE, ninth brief running,
+−$306 so far"* is a number rather than a paragraph nobody acts on. A list that
+fills with observations is a list nobody reads, and then the counter measures
+attention that was never being paid. Full contract in `docs/AGENTS.md`.
+
+**`kind` is part of an action item's identity.** Two agents describing one
+recommendation differently used to close the old row and open a new one:
+SSB crossed three rows in twenty-six hours (move_stop → review → move_stop)
+and each read "raised once". `src/lib/action-items.ts` now carries history
+across a kind change when exactly one item is open for that symbol — and
+refuses when two are, because "close it" and "move the stop" are different
+instructions. `resolution` says WHY an item closed, since `done` could not
+tell one Oron acted on from one silently retracted.
+
+---
+
 ## Still open
 
 - **10 trades await the three free-text review fields.** Fills, dates, stops,
-  P/L and R are now all verified against the Colmex *execution* export
+  P/L and R are all verified against the Colmex *execution* export
   (`trades_…csv` — the *transactions* export is a cash ledger with no prices).
   What is left is `whatWorked` / `whatFailed` / `lesson`, which `/api/review`
   requires and which are Oron's to write. Do not fabricate them, and never
   `emotion`. **ZS and XOM first** — one is the entry-discipline lesson, the
   other the stop-discipline one.
-- **`/sync` needs an `ANTHROPIC_API_KEY`** he has chosen not to add. The
-  alternative is a typed form using the same verification arithmetic — not
-  built.
-- **The grader has run once, by hand (run #48, 2026-08-25) — nothing schedules
-  it.** That single run is why Ideas holds 7 suggestions instead of nothing,
-  and it will go stale on its own. Scheduling it is the highest-leverage item
-  left.
+- **Nothing enforces a rule while a position is OPEN.** Every gate is checked
+  at entry and none afterwards. `time_stop_on_B` says a B-grade closes flat
+  after 8–10 sessions; `holdSessions` exists as a column that nothing fills.
+  SSB is a B opened 2026-08-25, so its time stop lands around 5–9 September and
+  nothing will say so.
+- **`cooldown_24h` cannot be evaluated.** `/api/state` exposes no recent
+  stop-out history, yet the grader has been listing it in `gatesPassed` — a
+  claimed pass with nothing behind it. Either expose closes or drop the rule.
+- **Nothing verifies the grader's own gate claims.** `gatesPassed` is whatever
+  the agent wrote. The app stores entry, stop, target and rr and could
+  recompute them at ingest exactly as it does for Colmex rows. That is how
+  CCDBF was posted claiming `rr_2to1` at 2.0 gross / 1.85 net.
 - **`rMultiple` is permanently NULL for NKE, QQQ and NTRA.** All three were
   entered with no stop, so there is no initial risk to divide by. That is the
-  honest record, not missing data — do not backfill a stop to make the column
-  populate.
-- **Two rule notes were rewritten on 2026-08-25** because they cited figures no
-  trade supported. Treat every `rules.note` as a claim to re-derive, not a
-  finding. The `stop_beyond_structure` note had to be retracted inside one
-  session after a single omitted trade (NTRA, +$273, also unstopped) moved its
-  bucket from −$347 to −$74.
-- **Five wishlist rows have no score** — legacy, they heal as the rotation
-  reaches them.
+  honest record — do not backfill a stop to make the column populate.
+- **MAE/MFE is not being captured at all.** The Colmex Positions panel shows no
+  daily high or low, so the manual sync sends null. Recoverable from bars for a
+  CLOSED trade, except on the entry day.
+- **`catalysts` is empty and the Catalyst Calendar has never run**, so both
+  event vetoes are resolved by per-name web search each run.
+- **The signal scorer runs by hand** (`npm run signals:score`) and has no page.
+  Nine outcomes so far — far too few to read. Wire it into the sweep, and build
+  the report at forty or fifty, not before.
+- **Treat every `rules.note` as a claim to re-derive.** Two were rewritten on
+  2026-08-25 because they cited figures no trade supported, and one of the
+  replacements had to be retracted the same session when a single omitted trade
+  (NTRA, +$273) moved its bucket from −$347 to −$74.
+- **The ingest token was pasted into a chat on 2026-08-26** and sits in
+  plaintext inside an old Cowork task. Rotating it means four places: Vercel
+  env, `.agent-token`, the GitHub Actions secret, and that task.
