@@ -331,7 +331,20 @@ RANKED ACTIONS — most valuable first, each with the dollar impact.
 
 ============ STEP 5 — POST ACTION ITEMS ============
 kind "action_items", agent "manual_sync". Item kinds: close | move_stop |
-adjust_tp | open | review. Each carries symbol, text, rationale, mark, qty.
+adjust_tp | open | review. Each carries symbol, text, rationale, mark, qty —
+and a `key`.
+
+GIVE EVERY ITEM A `key`. A short slug you control, the SAME string every run
+for the same recommendation: `ssb-hold-stop`, `cbre-concentration`,
+`yumc-cancel-limit`. It is how the server knows this is the item it already
+has, and it is matched before anything else.
+
+Without one the server guesses, and it has guessed wrong twice: it lost SSB's
+history three times when two agents labelled one recommendation differently,
+then merged two unrelated CBRE items — a target concern and a concentration
+breach — because one open item per symbol is the normal case. Pick a key from
+what the recommendation IS, not from how you happen to word it today, and do
+not change it when the wording changes.
 
 Send the COMPLETE current list. Items you stop sending are marked resolved;
 items repeated accrue their cost of delay automatically.
