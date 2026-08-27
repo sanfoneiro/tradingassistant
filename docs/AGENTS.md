@@ -179,7 +179,10 @@ a screen instead of a paragraph nobody acts on.
 
 ### `catalysts`, `run`
 
-`catalysts` replaces all future-dated rows. `run` records an agent execution on
+`catalysts` replaces all future-dated rows — so ONE payload must carry every
+calendar. Posting earnings, macro and dividends as three requests leaves only
+the last one standing. `npm run calendars:sync` builds all three and posts
+once; nothing else should write this table. `run` records an agent execution on
 its own — use it when an agent does something that writes nothing else, so that
 "did it run?" is always answerable.
 
@@ -549,7 +552,19 @@ Arithmetic that must hold:
     an R-multiple target be used, and then solve for the NET ratio, not 2R.
   - Fees: $2.00 per order minimum, so $4.00 the round trip. Quote R:R net of
     it (see "The 2:1 gate is gross" in CLAUDE.md).
-  - Dividends: check the ex-date, use dividendImpact() in src/lib/metrics.ts.
+  - Dividends and earnings: `/api/state` now returns `catalysts`, populated by
+    `npm run calendars:sync`. Read the ex-date from there (kind `ex_dividend`)
+    and use dividendImpact() in src/lib/metrics.ts. Do NOT web-search a date
+    that is already in the payload.
+    Two things about that data decide how much it can carry:
+      * `kind` is `earnings` for a CONFIRMED date and `earnings_estimated`
+        beyond roughly two weeks, where Finviz is guessing. An estimated date
+        does not carry the same veto weight as a confirmed one — say which
+        you used.
+      * The ABSENCE of a row is not evidence of a clear calendar. Finviz
+        returns zero for thin weeks and for market holidays alike. If a
+        candidate has no earnings row and the run is inside 48h of a possible
+        report, say the calendar is silent rather than saying it is clear.
   - Sizing: 1% of sizingBase. If no concentration rule exists in the `rules`
     table, post shares: null and sizeUsd: null and say sizing is pending that
     decision. Do NOT invent a cap.
