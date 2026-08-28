@@ -287,6 +287,21 @@ export const screenerPassIn = z.object({
 
 export const catalystIn = z.object({
   kind: z.literal("catalysts"),
+  /**
+   * Which sub-calendars this payload REPLACES. Only rows of these kinds are
+   * cleared before insert.
+   *
+   * Without it the handler wiped every future-dated row and reinserted only
+   * what arrived — so a run where the dividends fetch failed but earnings and
+   * macro succeeded deleted every ex-dividend row and put nothing back. The
+   * grader then reads a silent calendar and either trades through a dividend
+   * or web-searches the date, which is the failure this table was added to
+   * prevent.
+   *
+   * Omitted means "replace everything", preserving the old behaviour for any
+   * caller that sends the whole calendar at once.
+   */
+  kinds: z.array(z.string()).optional(),
   items: z.array(
     z.object({
       symbol: z.string().nullable(),

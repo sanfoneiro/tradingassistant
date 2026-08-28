@@ -24,9 +24,8 @@ CREATE TABLE IF NOT EXISTS bars (
   PRIMARY KEY (symbol, d)
 );
 
--- The sweep reads one symbol's whole history in date order; the universe
--- filter reads one session across every symbol. One index each.
-CREATE INDEX IF NOT EXISTS bars_symbol_d_idx ON bars (symbol, d);
+-- The primary key already indexes (symbol, d), which serves the sweep's
+-- per-symbol read. Only the cross-symbol single-session scan needs its own.
 CREATE INDEX IF NOT EXISTS bars_d_idx ON bars (d);
 
 -- The first cut of this migration used `numeric`, which disagreed with

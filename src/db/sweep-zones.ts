@@ -145,14 +145,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Checked here rather than discovered inside the loop, where a missing key
-  // produces one identical failure per symbol and buries the cause 114 lines
-  // deep.
-  if (!process.env.MASSIVE_API_KEY?.trim()) {
-    console.error("MASSIVE_API_KEY is not set — nothing could be fetched.");
-    process.exit(1);
-  }
-
   // A numeric argument caps the batch; anything else is a list of symbols to
   // sweep directly. Naming symbols is how you re-check one name without
   // waiting for the rotation to reach it.
@@ -165,6 +157,28 @@ async function main() {
   const args = argv.filter((a) => !a.startsWith("--"));
   const explicit = args.filter((a) => !/^\d+$/.test(a)).map((a) => a.toUpperCase());
   const limit = Number(args.find((a) => /^\d+$/.test(a))) || Infinity;
+
+  /**
+   * Checked here rather than discovered inside the loop, where a missing
+   * credential produces one identical failure per symbol and buries the cause
+   * a hundred lines deep.
+   *
+   * Which credential is needed depends on the mode, and this check used to run
+   * before the flags were parsed — so `--from-db` refused to start without a
+   * MASSIVE_API_KEY it would never use, while the DATABASE_URL it genuinely
+   * needs went unchecked until a `!` assertion turned it into a connection
+   * error. Each mode now asks for what it actually uses.
+   */
+  if (!fromDb && !process.env.MASSIVE_API_KEY?.trim()) {
+    console.error("MASSIVE_API_KEY is not set — nothing could be fetched.");
+    process.exit(1);
+  }
+  if (fromDb && !process.env.DATABASE_URL?.trim()) {
+    console.error(
+      "DATABASE_URL is not set — --from-db and --wide read bars from the store.",
+    );
+    process.exit(1);
+  }
 
   /**
    * Two UTC crons cover the intraday slot so that one of them lands in the
@@ -319,21 +333,6 @@ async function main() {
         console.log(
           `${tag} ${daily.length} bars < ${MIN_BARS_FOR_TREND} — trend not classifiable, skipped`,
         );
-        continue;
-      }
-
-      if (daily.length < 60) {
-        // Too little history to mean anything. Recorded as looked-at so the
-        // rotation moves on, rather than retried forever.
-        pass.push({
-          symbol,
-          distancePct: null,
-          nearZone: false,
-          trend: null,
-          adr: null,
-          note: `only ${daily.length} bars — insufficient history`,
-        });
-        console.log(`${tag} ${daily.length} bars, skipped`);
         continue;
       }
 
@@ -542,7 +541,18 @@ async function main() {
    * that wrote no zones, and for the same reason: reporting green while
    * refreshing nothing is the silence this project keeps removing.
    */
-  const allStale = afterOpen && stale.length === queue.length;
+  /**
+   * Every symbol that COULD have been priced was stale.
+   *
+   * The denominator has to exclude the names that never reached the price
+   * check: short-history and failed symbols `continue` before `barState()`
+   * runs, so comparing against the whole queue meant one newly-listed ticker
+   * was enough to make `allStale` false. The run then recorded `ok`, not
+   * degraded, with the "data plan does not include the current session" note
+   * dropped — defeating this guard in exactly the case it exists for.
+   */
+  const priceable = queue.length - shortHistory.length - failed.length;
+  const allStale = afterOpen && priceable > 0 && stale.length === priceable;
   const degraded = failed.length > queue.length / 4 || allStale;
 
   await post({

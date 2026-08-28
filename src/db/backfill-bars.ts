@@ -165,9 +165,28 @@ async function main() {
   console.log(`${tracked.size} names already tracked — kept whatever their volume.`);
 
   /* ---- pick the discovery universe from recent sessions ---- */
+  const universe = new Set(tracked);
+
+  /**
+   * A --daily run extends a store that already exists, so the universe is
+   * whatever is in it. Sampling would spend five throttled calls (a minute of
+   * wall time, five slots of a shared budget) rediscovering names already on
+   * disk, to add one session's worth of new work.
+   */
+  if (dailyOnly) {
+    for (const r of await sql<{ symbol: string }[]>`SELECT DISTINCT symbol FROM bars`) {
+      universe.add(r.symbol);
+    }
+    console.log(`universe: ${universe.size} names, taken from the store\n`);
+  } else {
+    await sampleUniverse(universe);
+  }
+
+  async function sampleUniverse(into: Set<string>) {
   const stats = new Map<string, { c: number[]; v: number[] }>();
   let cursor = prevDay(etDate(new Date())); // today is outside the plan
   let sampled = 0;
+  let sampleMisses = 0;
   while (sampled < SAMPLE_SESSIONS) {
     if (isWeekend(cursor)) {
       cursor = prevDay(cursor);
@@ -175,10 +194,20 @@ async function main() {
     }
     const rows = await grouped(cursor);
     if (rows === null) {
+      // The same bound the main walk uses. Without it, a plan whose window
+      // shifts leaves this loop stepping backwards forever at five requests a
+      // minute, never reaching the guard eighty lines below.
+      if (++sampleMisses >= MAX_CONSECUTIVE_OUT_OF_WINDOW) {
+        throw new Error(
+          `${sampleMisses} consecutive sessions outside the plan's window while ` +
+            `sampling — no recent session is readable, so no universe can be picked`,
+        );
+      }
       console.log(`  ${cursor}: outside the plan's window, stepping back`);
       cursor = prevDay(cursor);
       continue;
     }
+    sampleMisses = 0;
     if (rows.length) {
       for (const b of rows) {
         if (!stats.has(b.T)) stats.set(b.T, { c: [], v: [] });
@@ -192,22 +221,22 @@ async function main() {
     cursor = prevDay(cursor);
   }
 
-  const universe = new Set(tracked);
   let liquid = 0;
   for (const [t, e] of stats) {
     // Present on every sampled session — a ticker that shows up twice in five
     // days is not something to hold a swing position in.
     if (e.c.length < SAMPLE_SESSIONS) continue;
     if (median(e.c) >= MIN_PRICE && median(e.v) >= MIN_VOLUME) {
-      universe.add(t);
+      into.add(t);
       liquid++;
     }
   }
   console.log(
-    `\nuniverse: ${universe.size} names ` +
+    `\nuniverse: ${into.size} names ` +
       `(${liquid} clear $${MIN_PRICE}/${MIN_VOLUME / 1e6}M, ` +
-      `${universe.size - liquid} kept because the book tracks them)\n`,
+      `${into.size - liquid} kept because the book tracks them)\n`,
   );
+  }
 
   /* ---- what do we already have? ---- */
   const have = new Set(

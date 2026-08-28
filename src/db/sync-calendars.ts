@@ -87,7 +87,22 @@ async function main() {
   const end = addDays(start, horizon);
   console.log(`building the calendar for ${start} → ${end} (${horizon} days)\n`);
 
-  const items: Item[] = [];
+  /**
+   * Kept per sub-calendar rather than in one bucket, because a payload
+   * REPLACES the kinds it carries. Mixing them meant a failed dividends fetch
+   * still shipped earnings and macro, and the handler's blanket delete then
+   * wiped every stored ex-dividend row.
+   *
+   * A sub-calendar that failed anywhere is dropped whole: its rows are not
+   * sent and its kinds are not listed, so what is already stored survives.
+   * Stale ex-dates are still true facts; a partial replacement would silently
+   * delete real events for the days that failed.
+   */
+  const groups: Record<string, { kinds: string[]; items: Item[]; failed: boolean }> = {
+    earnings: { kinds: ["earnings", "earnings_estimated"], items: [], failed: false },
+    macro: { kinds: ["macro"], items: [], failed: false },
+    dividends: { kinds: ["ex_dividend"], items: [], failed: false },
+  };
   const failures: string[] = [];
   let emptyDays = 0;
 
@@ -108,7 +123,7 @@ async function main() {
       if (!rows.length) emptyDays++;
       else earningsDays++;
       for (const e of rows) {
-        items.push({
+        groups.earnings.items.push({
           symbol: e.ticker,
           // The estimate flag lives in `kind` rather than only in prose, so a
           // consumer can filter on it without parsing a sentence. An
@@ -121,20 +136,21 @@ async function main() {
       }
       if (!rows.meta.complete) {
         failures.push(`earnings ${day} truncated (${rows.length}/${rows.meta.total})`);
+        groups.earnings.failed = true;
       }
       process.stdout.write(`  earnings ${day}: ${String(rows.length).padStart(3)}\r`);
     } catch (e) {
       failures.push(`earnings ${day}: ${e instanceof Error ? e.message : String(e)}`);
+      groups.earnings.failed = true;
     }
     await sleep(PACE_MS);
   }
   console.log(
-    `earnings: ${items.length} events across ${earningsDays}/${tradingDays} weekdays ` +
-      `(${emptyDays} returned nothing — unknown, not necessarily clear)`,
+    `earnings: ${groups.earnings.items.length} events across ${earningsDays}/${tradingDays} ` +
+      `weekdays (${emptyDays} returned nothing — unknown, not necessarily clear)`,
   );
 
   /* ------------- economic: one request per WEEK ------------- */
-  const before = items.length;
   const seenEvents = new Set<string>();
   for (let i = 0; i < horizon; i += 7) {
     const day = addDays(start, i);
@@ -146,7 +162,7 @@ async function main() {
         const key = `${ev.event}|${ev.at.toISOString()}`;
         if (seenEvents.has(key)) continue;
         seenEvents.add(key);
-        items.push({
+        groups.macro.items.push({
           symbol: null, // null symbol = macro, per the schema
           kind: "macro",
           eventAt: ev.at.toISOString(),
@@ -155,13 +171,15 @@ async function main() {
       }
     } catch (e) {
       failures.push(`economic ${day}: ${e instanceof Error ? e.message : String(e)}`);
+      groups.macro.failed = true;
     }
     await sleep(PACE_MS);
   }
-  console.log(`economic: ${items.length - before} releases at impact ${MIN_IMPORTANCE}+`);
+  console.log(
+    `economic: ${groups.macro.items.length} releases at impact ${MIN_IMPORTANCE}+`,
+  );
 
   /* ---------- dividends: Massive, paginated to exhaustion ---------- */
-  const divBefore = items.length;
   try {
     let url =
       `https://api.massive.com/stocks/v1/dividends` +
@@ -175,7 +193,7 @@ async function main() {
       const body = await res.json();
       for (const d of body.results ?? []) {
         if (!d.ticker || !d.ex_dividend_date) continue;
-        items.push({
+        groups.dividends.items.push({
           symbol: d.ticker,
           kind: "ex_dividend",
           // Ex-dividend is a date, not a moment; anchor it at the open so it
@@ -196,18 +214,38 @@ async function main() {
       pages++;
       if (url) await sleep(300);
     }
-    console.log(`dividends: ${items.length - divBefore} ex-dates across ${pages} page(s)`);
+    console.log(
+      `dividends: ${groups.dividends.items.length} ex-dates across ${pages} page(s)`,
+    );
   } catch (e) {
     failures.push(`dividends: ${e instanceof Error ? e.message : String(e)}`);
+    groups.dividends.failed = true;
     console.log(`dividends: FAILED — ${e instanceof Error ? e.message : e}`);
   }
 
   /* ----------------------- write ----------------------- */
   /**
-   * One POST for everything. `handleCatalysts` deletes every future-dated row
-   * before inserting, so posting the three calendars separately would leave
-   * only the last one standing.
+   * One POST, carrying only the sub-calendars that fetched cleanly.
+   *
+   * The payload REPLACES the kinds it names, so a sub-calendar that failed
+   * anywhere is left out entirely rather than sent half-built — its stored
+   * rows then survive untouched. Sending a partial earnings set would delete
+   * the days that failed and put nothing back, which turns a transient 429
+   * into a silently missing veto input.
    */
+  const shipped = Object.entries(groups).filter(([, g]) => !g.failed && g.items.length);
+  const skipped = Object.entries(groups).filter(([, g]) => g.failed);
+  const items = shipped.flatMap(([, g]) => g.items);
+  const kinds = shipped.flatMap(([, g]) => g.kinds);
+
+  for (const [name, g] of skipped) {
+    console.log(
+      `${name}: NOT posted — ${g.items.length} row(s) fetched but the set is ` +
+        `incomplete. Whatever is already stored is kept rather than replaced ` +
+        `with a partial calendar.`,
+    );
+  }
+
   if (!items.length) {
     console.error(
       "\nNothing was collected. Refusing to post — an empty payload is a no-op, " +
@@ -224,7 +262,7 @@ async function main() {
   }
 
   items.sort((a, b) => a.eventAt.localeCompare(b.eventAt));
-  const res = await post({ kind: "catalysts", items });
+  const res = await post({ kind: "catalysts", kinds, items });
 
   const counts = items.reduce<Record<string, number>>((acc, i) => {
     acc[i.kind] = (acc[i.kind] ?? 0) + 1;
@@ -234,7 +272,7 @@ async function main() {
     .map(([k, n]) => `${n} ${k}`)
     .join(", ");
 
-  const degraded = failures.length > 0;
+  const degraded = failures.length > 0 || skipped.length > 0;
   await post({
     kind: "run",
     agent: "calendar_sync",
@@ -243,10 +281,16 @@ async function main() {
     notes:
       `${start}→${end}: ${summary}. ` +
       `${emptyDays}/${tradingDays} weekdays returned no earnings (unknown, not confirmed clear)` +
+      (skipped.length
+        ? `. NOT refreshed, prior rows kept: ${skipped.map(([n]) => n).join(", ")}`
+        : "") +
       (failures.length ? `. Problems: ${failures.join("; ").slice(0, 500)}` : ""),
   });
 
-  console.log(`\nposted ${items.length} catalysts → ${JSON.stringify(res)}`);
+  console.log(
+    `\nposted ${items.length} catalysts, replacing ${kinds.join(", ")} → ` +
+      JSON.stringify(res),
+  );
   console.log(`  ${summary}`);
   if (failures.length) {
     console.log(`\n${failures.length} problem(s):`);

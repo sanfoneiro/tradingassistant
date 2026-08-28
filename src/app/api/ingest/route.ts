@@ -904,7 +904,24 @@ async function handleScreenerPass(p: Extract<P, { kind: "screener_pass" }>) {
 
 async function handleCatalysts(p: Extract<P, { kind: "catalysts" }>) {
   if (!p.items.length) return { ok: true, inserted: 0 };
-  await db.execute(sql`DELETE FROM catalysts WHERE event_at > NOW()`);
+
+  /**
+   * Replace only the sub-calendars this payload actually carries.
+   *
+   * A blanket `DELETE ... WHERE event_at > NOW()` meant one failed fetch
+   * destroyed the others: a sync where dividends 429'd but earnings and macro
+   * succeeded posted a payload with no ex_dividend rows, wiped every stored
+   * one, and left the dividend veto reading a silent calendar. Yesterday's
+   * ex-dates are stale but true; deleting them substitutes a confident
+   * nothing for a slightly old something, which is the wrong direction.
+   */
+  const kinds = p.kinds?.length
+    ? p.kinds
+    : [...new Set(p.items.map((c) => c.kind))];
+
+  await db.execute(
+    sql`DELETE FROM catalysts WHERE event_at > NOW() AND kind = ANY(${kinds})`,
+  );
   await db.insert(catalysts).values(
     p.items.map((c) => ({
       symbol: c.symbol,
@@ -913,7 +930,7 @@ async function handleCatalysts(p: Extract<P, { kind: "catalysts" }>) {
       note: c.note ?? null,
     })),
   );
-  return { ok: true, inserted: p.items.length };
+  return { ok: true, inserted: p.items.length, replaced: kinds };
 }
 
 async function handleRun(p: Extract<P, { kind: "run" }>) {
