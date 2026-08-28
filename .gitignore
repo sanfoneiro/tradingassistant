@@ -21,3 +21,6 @@ _to_delete/
 
 # Patch files delivered into the repo root, applied then discarded
 *.patch
+
+# Local Claude Code settings — machine-specific, and this repo is public
+.claude/settings.local.json
