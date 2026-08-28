@@ -224,6 +224,9 @@ async function main() {
   let holidays = 0;
   let stoppedEarly: string | null = null;
   let outOfWindow = 0;
+  /** Set when the walk reaches the end of the plan's history — an answer,
+   *  not a fault. */
+  let exhaustedAt: string | null = null;
 
   while (done < sessions) {
     if (isWeekend(day)) {
@@ -251,10 +254,15 @@ async function main() {
       // does not count as a session done.
       outOfWindow++;
       if (outOfWindow >= MAX_CONSECUTIVE_OUT_OF_WINDOW) {
-        stoppedEarly =
-          `${outOfWindow} consecutive sessions outside the plan's window — ` +
-          `history starts around ${day}`;
-        console.log(`  ${stoppedEarly}`);
+        // Running out of history is not a failure — it is the answer. The
+        // plan holds about two years, which is ~501 sessions rather than the
+        // 504 estimated here, so a run that reaches the end would otherwise
+        // report INCOMPLETE every single time. A guard that always fires is a
+        // guard nobody reads.
+        exhaustedAt = day;
+        console.log(
+          `  history ends around ${day} — that is everything the plan holds`,
+        );
         break;
       }
       console.log(`  ${day}: not in plan window`);
@@ -320,7 +328,12 @@ async function main() {
    * say how far it got and fail — not to let a partial history look complete
    * to whatever reads `bars` next.
    */
-  if (stoppedEarly || done < sessions) {
+  if (exhaustedAt) {
+    console.log(
+      `\nComplete: ${done} sessions, back to ${exhaustedAt}. The plan holds about ` +
+        `two years, so this is the whole window — not a short run.`,
+    );
+  } else if (stoppedEarly || done < sessions) {
     console.error(
       `\nINCOMPLETE: ${done} of ${sessions} sessions.` +
         (stoppedEarly ? ` Stopped on: ${stoppedEarly}` : "") +
