@@ -20,6 +20,13 @@ import {
 } from "../lib/rank";
 import { etParts, barState, OPEN } from "../lib/session";
 import { APP_URL, resolveToken, makeClient } from "../lib/ingest-client";
+import postgres from "postgres";
+import {
+  loadBars,
+  universeFromBars,
+  storeDepth,
+  MIN_BARS_FOR_TREND,
+} from "../lib/bars-store";
 
 /**
  * The universe sweep. Reads the rotation queue, computes zones for a batch
@@ -151,6 +158,10 @@ async function main() {
   // waiting for the rotation to reach it.
   const argv = process.argv.slice(2).filter(Boolean);
   const afterOpen = argv.includes("--after-open");
+  // Reading bars from the store instead of the wire. --wide implies it:
+  // 1,875 symbols over a five-a-minute API is six hours, which is not a sweep.
+  const wide = argv.includes("--wide");
+  const fromDb = wide || argv.includes("--from-db");
   const args = argv.filter((a) => !a.startsWith("--"));
   const explicit = args.filter((a) => !/^\d+$/.test(a)).map((a) => a.toUpperCase());
   const limit = Number(args.find((a) => /^\d+$/.test(a))) || Infinity;
@@ -183,21 +194,70 @@ async function main() {
   console.log(`reading the queue from ${APP_URL}…`);
   const state: State = await api("/api/state");
 
+  const sql = fromDb
+    ? postgres(process.env.DATABASE_URL!, { max: 1, prepare: false })
+    : null;
+
+  /**
+   * The store must be DEEP enough before it can be swept, and a shallow one
+   * fails silently rather than loudly: classifyTrend needs 200 bars plus a
+   * 20-bar lookback, and below that every symbol comes back `contested` —
+   * which rank.ts guarantees can never clear the bar. Sweeping a half-filled
+   * table would report a clean run over an empty funnel.
+   */
+  if (sql) {
+    const depth = await storeDepth(sql);
+    console.log(
+      `bars store: ${depth.sessions} sessions ${depth.from}..${depth.to}, ` +
+        `${depth.symbols} symbols`,
+    );
+    if (depth.sessions < MIN_BARS_FOR_TREND) {
+      console.error(
+        `\nThe store holds ${depth.sessions} sessions; trend classification needs ` +
+          `${MIN_BARS_FOR_TREND}.\nEvery symbol would come back "contested" and ` +
+          `nothing would clear the bar — a clean-looking run\nover an empty funnel. ` +
+          `Finish the backfill first:  npm run bars:backfill`,
+      );
+      await sql.end();
+      process.exit(1);
+    }
+  }
+
+  // Tracked names come first in the wide queue, so capping a run can never
+  // mean an open position goes unlooked-at.
+  const wideRows = sql && wide ? await universeFromBars(sql) : [];
+
   // /api/state already returns coverage oldest-analysed first, nulls ahead
   // of everything, so the queue order is the app's and not reinvented here.
   const queue = explicit.length
     ? explicit
-    : state.screenerCoverage.map((c) => c.symbol).slice(0, limit);
+    : wide
+      ? wideRows.map((r) => r.symbol).slice(0, limit)
+      : state.screenerCoverage.map((c) => c.symbol).slice(0, limit);
   const never = state.screenerCoverage.filter((c) => !c.analyzedAt).length;
+
+  /**
+   * With --wide the queue is the bars store, not the saved screen. Coverage is
+   * still recorded ONLY for names the screen carries, so `screener_coverage`
+   * keeps meaning "what the saved screen returned" instead of quietly becoming
+   * "everything we happen to hold bars for". Wide discovery shows up in the
+   * wishlist, which is where the funnel starts.
+   */
+  const onTheScreen = new Set(state.screenerCoverage.map((c) => c.symbol));
 
   console.log(
     explicit.length
       ? `Sweeping ${queue.length} named symbol(s): ${queue.join(", ")}`
-      : `${state.screenerCoverage.length} in the universe, ${never} never analysed. ` +
-          `Sweeping ${queue.length}.`,
+      : wide
+        ? `${wideRows.length} names in the store with enough history ` +
+            `(${wideRows.filter((r) => r.tracked).length} tracked). Sweeping ${queue.length}.`
+        : `${state.screenerCoverage.length} in the universe, ${never} never analysed. ` +
+            `Sweeping ${queue.length}.`,
   );
   console.log(
-    `≈${Math.ceil(queue.length / RATE_LIMIT_PER_MIN)} min at ${RATE_LIMIT_PER_MIN} req/min.\n`,
+    fromDb
+      ? `reading bars from the store — no rate limit.\n`
+      : `≈${Math.ceil(queue.length / RATE_LIMIT_PER_MIN)} min at ${RATE_LIMIT_PER_MIN} req/min.\n`,
   );
 
   const throttle = new Throttle();
@@ -231,14 +291,36 @@ async function main() {
   /** Symbols an intraday pass could not price because today's bar was not
    *  available. Counted, named, and reported — never silently substituted. */
   const stale: string[] = [];
+  /** Symbols with too little stored history to classify a trend at all. */
+  const shortHistory: string[] = [];
 
   for (let i = 0; i < queue.length; i++) {
     const symbol = queue[i];
     const tag = `[${String(i + 1).padStart(3)}/${queue.length}] ${symbol.padEnd(6)}`;
 
     try {
-      await throttle.take();
-      const daily = await fetchDailyBars(symbol, { years: 2 });
+      let daily: Bar[];
+      if (sql) {
+        daily = await loadBars(sql, symbol, 2);
+      } else {
+        await throttle.take();
+        daily = await fetchDailyBars(symbol, { years: 2 });
+      }
+
+      /**
+       * Below the trend floor a symbol is not a weak candidate, it is an
+       * unclassifiable one: classifyTrend returns `contested` and rank.ts
+       * guarantees contested can never clear the bar. Swept anyway, it would
+       * be recorded as "looked at, nothing there" — a judgement the data
+       * cannot support. Named and skipped instead.
+       */
+      if (daily.length < MIN_BARS_FOR_TREND) {
+        shortHistory.push(symbol);
+        console.log(
+          `${tag} ${daily.length} bars < ${MIN_BARS_FOR_TREND} — trend not classifiable, skipped`,
+        );
+        continue;
+      }
 
       if (daily.length < 60) {
         // Too little history to mean anything. Recorded as looked-at so the
@@ -441,7 +523,16 @@ async function main() {
     }
   }
 
-  if (pass.length) await post({ kind: "screener_pass", symbols: pass });
+  /**
+   * Coverage is the saved screen's record, so a wide run reports only on the
+   * names the screen carries. Posting all 1,875 would also time the request
+   * out: handleScreenerPass does a select plus a write PER SYMBOL, serially,
+   * over the network.
+   */
+  const coverage = wide ? pass.filter((p) => onTheScreen.has(p.symbol)) : pass;
+  for (let i = 0; i < coverage.length; i += 150) {
+    await post({ kind: "screener_pass", symbols: coverage.slice(i, i + 150) });
+  }
   if (watch.length) await post({ kind: "wishlist", items: watch });
 
   const nearCount = pass.filter((p) => p.nearZone).length;
@@ -482,6 +573,13 @@ async function main() {
   if (failed.length) {
     console.log(`${failed.length} failed: ${failed.map((f) => f.symbol).join(", ")}`);
   }
+  if (shortHistory.length) {
+    console.log(
+      `${shortHistory.length} skipped — under ${MIN_BARS_FOR_TREND} bars, so no trend ` +
+        `could be classified: ${shortHistory.slice(0, 10).join(", ")}` +
+        `${shortHistory.length > 10 ? "…" : ""}`,
+    );
+  }
   if (stale.length) {
     console.log(
       `${stale.length} skipped — no bar for today, so no live mark to price against` +
@@ -518,6 +616,8 @@ async function main() {
   // one. Reporting a degraded run into the database and then exiting green
   // is the same silence this project keeps trying to remove — the run record
   // is for the app, the exit code is for the human watching Actions.
+  if (sql) await sql.end();
+
   if (degraded || zonesWritten === 0) {
     console.error(
       `\nFAILED: ${failed.length}/${queue.length} symbols errored, ` +
