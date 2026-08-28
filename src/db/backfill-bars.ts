@@ -93,6 +93,30 @@ async function grouped(date: string): Promise<Grouped[] | null> {
   }
 }
 
+/**
+ * Neon is serverless and a two-hour walk WILL lose its connection — the first
+ * full run died on `write ECONNABORTED` at session 118 of 504, mid-insert.
+ * A dropped socket is a "try again", not a reason to abandon 400 sessions of
+ * work, and postgres.js reconnects on the next query.
+ */
+async function withRetry<T>(fn: () => Promise<T>, what: string): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const droppedSocket =
+        /ECONNABORTED|ECONNRESET|EPIPE|ETIMEDOUT|CONNECTION_(CLOSED|ENDED)|terminating/i.test(
+          msg,
+        );
+      if (!droppedSocket || attempt >= 3) throw e;
+      const waitMs = [1_000, 5_000, 15_000][attempt];
+      console.log(`  ${what}: ${msg} — reconnecting in ${waitMs / 1000}s`);
+      await sleep(waitMs);
+    }
+  }
+}
+
 function prevDay(iso: string, n = 1): string {
   const d = new Date(`${iso}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() - n);
@@ -239,10 +263,13 @@ async function main() {
         c: b.c,
         v: b.v ?? null,
       }));
-      const res = await sql`
-        INSERT INTO bars ${sql(chunk, "symbol", "d", "o", "h", "l", "c", "v")}
-        ON CONFLICT (symbol, d) DO NOTHING
-      `;
+      const res = await withRetry(
+        () => sql`
+          INSERT INTO bars ${sql(chunk, "symbol", "d", "o", "h", "l", "c", "v")}
+          ON CONFLICT (symbol, d) DO NOTHING
+        `,
+        `insert ${day}`,
+      );
       // Count what actually landed, not what was offered. ON CONFLICT DO
       // NOTHING means a re-run inserts zero, and a counter that reports the
       // attempt would show a full backfill on a run that wrote nothing.
