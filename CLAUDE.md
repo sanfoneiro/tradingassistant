@@ -231,6 +231,19 @@ It now asks `barState()` what session the last bar covers (`src/lib/session.ts`,
 tested both ways) and **skips rather than restating stale numbers**; an
 all-stale intraday run is recorded degraded and exits non-zero.
 
+**The sweep can read bars from the store instead of the wire.**
+`--from-db` reads `bars`; `--wide` implies it and takes the queue from the
+store rather than the saved screen. Both **refuse to start** below
+`MIN_BARS_FOR_TREND` (220) sessions, because `classifyTrend` runs a 200-EMA
+with a 20-bar lookback and returns `contested` below that — and `rank.ts`
+guarantees contested can never clear the bar. A shallow store would therefore
+produce a clean-looking run over an empty funnel rather than a visibly wrong
+one. `--wide` also leaves `screener_coverage` alone for names the screen does
+not carry, so that table keeps meaning "what the saved screen returned"; wide
+discovery shows up in the wishlist. Using either flag in CI needs a
+`DATABASE_URL` secret, which `.github/workflows/zones.yml` does not have — the
+default path still reads the API, so CI is unaffected.
+
 **It runs in Actions, not Vercel:** the free data tier is 5 requests/minute so
 115 symbols takes ~23 minutes, and Vercel Hobby crons fire once a day with
 hour-level precision.
