@@ -49,6 +49,10 @@ const SAMPLE_SESSIONS = 5;
 
 const DEFAULT_SESSIONS = 504; // ~2 years, the plan's history limit
 
+/** The plan holds about two years. Asking for more must terminate rather than
+ *  walk back through empty decades at five requests a minute. */
+const MAX_CONSECUTIVE_OUT_OF_WINDOW = 8;
+
 type Grouped = { T: string; o: number; h: number; l: number; c: number; v: number };
 
 const throttle = new Throttle();
@@ -137,8 +141,10 @@ async function main() {
   }
   const argv = process.argv.slice(2);
   const dailyOnly = argv.includes("--daily");
+  // --daily means exactly one session — the newest one missing. Anything else
+  // would make the completeness check below fire on a successful run.
   const sessions = dailyOnly
-    ? SAMPLE_SESSIONS
+    ? 1
     : Number(argv.find((a) => /^\d+$/.test(a))) || DEFAULT_SESSIONS;
 
   const sql = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
@@ -217,6 +223,7 @@ async function main() {
   let done = 0;
   let holidays = 0;
   let stoppedEarly: string | null = null;
+  let outOfWindow = 0;
 
   while (done < sessions) {
     if (isWeekend(day)) {
@@ -239,10 +246,22 @@ async function main() {
     }
     if (rows === null) {
       // Either newer than the plan allows or older than its two-year window.
+      // Asking for more sessions than the plan holds would otherwise walk
+      // backwards forever, one throttled request at a time, because a 403
+      // does not count as a session done.
+      outOfWindow++;
+      if (outOfWindow >= MAX_CONSECUTIVE_OUT_OF_WINDOW) {
+        stoppedEarly =
+          `${outOfWindow} consecutive sessions outside the plan's window — ` +
+          `history starts around ${day}`;
+        console.log(`  ${stoppedEarly}`);
+        break;
+      }
       console.log(`  ${day}: not in plan window`);
       day = prevDay(day);
       continue;
     }
+    outOfWindow = 0;
     if (!rows.length) {
       holidays++;
       day = prevDay(day);
@@ -294,6 +313,21 @@ async function main() {
       (holidays ? ` ${holidays} market holiday(s) skipped.` : ""),
   );
   await sql.end();
+
+  /**
+   * A backfill that stopped at session 118 of 504 and exited 0 is the silence
+   * this project keeps removing. It is resumable, so the honest report is to
+   * say how far it got and fail — not to let a partial history look complete
+   * to whatever reads `bars` next.
+   */
+  if (stoppedEarly || done < sessions) {
+    console.error(
+      `\nINCOMPLETE: ${done} of ${sessions} sessions.` +
+        (stoppedEarly ? ` Stopped on: ${stoppedEarly}` : "") +
+        `\nRe-run to resume — sessions already stored are skipped.`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 main().catch((e) => {
