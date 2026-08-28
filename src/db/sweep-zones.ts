@@ -1,5 +1,3 @@
-import { readFileSync } from "fs";
-import { join } from "path";
 import { fetchDailyBars, Throttle, RATE_LIMIT_PER_MIN } from "../lib/massive";
 import {
   computeZonesDetailed,
@@ -20,6 +18,8 @@ import {
   type BreakSignal,
   type Quadrant,
 } from "../lib/rank";
+import { etParts, barState, OPEN } from "../lib/session";
+import { APP_URL, resolveToken, makeClient } from "../lib/ingest-client";
 
 /**
  * The universe sweep. Reads the rotation queue, computes zones for a batch
@@ -43,79 +43,15 @@ import {
  * everything else is recorded as coverage and left alone.
  */
 
-/**
- * `??` is the wrong operator for environment variables. An unset GitHub
- * Actions input arrives as an EMPTY STRING, not undefined, so `??` keeps it
- * and every request goes to a relative URL with no host — which surfaces as
- * "Failed to parse URL from /api/state" rather than anything about
- * configuration. `||` treats blank as absent, which is what was meant.
- */
-const APP_URL =
-  process.env.APP_URL?.trim() || "https://project-alr3f.vercel.app";
-
-/**
- * Token resolution, in the order that actually works.
- *
- * `.agent-token` is the project's convention — the skills read it from
- * there — and it is gitignored. It wins locally because a stale
- * INGEST_TOKEN in a `vercel env pull`-generated .env will otherwise
- * shadow it and produce a 401 that looks like a server fault. In CI there
- * is no such file and the environment variable is the only source.
- */
-function resolveToken(): { token: string; source: string } {
-  try {
-    const fromFile = readFileSync(
-      join(process.cwd(), ".agent-token"),
-      "utf8",
-    ).trim();
-    if (fromFile) return { token: fromFile, source: ".agent-token" };
-  } catch {
-    /* not present — expected in CI */
-  }
-  const fromEnv = process.env.INGEST_TOKEN?.trim();
-  if (fromEnv) return { token: fromEnv, source: "INGEST_TOKEN env var" };
-  return { token: "", source: "nowhere" };
-}
-
 const { token: TOKEN, source: TOKEN_SOURCE } = resolveToken();
+const { api, post } = makeClient(TOKEN);
 
 /** Inside this band a name is worth the grader's attention. */
 const NEAR_ZONE_PCT = 6;
 
-/**
- * What time is it on the exchange? Asked of the New York clock directly
- * rather than derived from UTC, because Israel and the US change DST on
- * different dates — for a couple of weeks each spring and autumn the offset
- * between them is not what it is the rest of the year. A cron fixed in UTC
- * drifts an hour across those windows; "what time is it in New York" never
- * does.
- */
-function newYorkNow(): { minutes: number; weekday: number; label: string } {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "2-digit",
-    minute: "2-digit",
-    weekday: "short",
-    hour12: false,
-  }).formatToParts(now);
-
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const hh = Number(get("hour")) % 24;
-  const mm = Number(get("minute"));
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-  return {
-    minutes: hh * 60 + mm,
-    weekday: days.indexOf(get("weekday")),
-    label: `${get("weekday")} ${String(hh).padStart(2, "0")}:${get("minute")} ET`,
-  };
-}
-
-const OPEN = 9 * 60 + 30; // 09:30 ET
-
 /** The settled part of the first hour: past the opening auction and the
- *  fifteen minutes of noise after it, still early enough to act on. */
+ *  fifteen minutes of noise after it, still early enough to act on.
+ *  Clock questions live in ../lib/session, where they are testable. */
 const AFTER_OPEN_FROM = OPEN + 15;
 const AFTER_OPEN_TO = OPEN + 90;
 
@@ -127,23 +63,6 @@ type State = {
   }[];
   zones: { symbol: string; timeframe: string; direction: string }[];
 };
-
-async function api(path: string, init?: RequestInit) {
-  const res = await fetch(`${APP_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${path} → ${res.status} ${text.slice(0, 300)}`);
-  return text ? JSON.parse(text) : {};
-}
-
-const post = (body: unknown) =>
-  api("/api/ingest", { method: "POST", body: JSON.stringify(body) });
 
 /**
  * One symbol/timeframe, whole. Levels go over verbatim and the server derives
@@ -243,7 +162,7 @@ async function main() {
    * quietly, and exactly one sweep happens.
    */
   if (afterOpen) {
-    const et = newYorkNow();
+    const et = etParts(new Date());
     const inWindow =
       et.weekday >= 1 &&
       et.weekday <= 5 &&
@@ -309,6 +228,9 @@ async function main() {
   let brokenReported = 0;
   let ideasExpired = 0;
   const failed: { symbol: string; error: string }[] = [];
+  /** Symbols an intraday pass could not price because today's bar was not
+   *  available. Counted, named, and reported — never silently substituted. */
+  const stale: string[] = [];
 
   for (let i = 0; i < queue.length; i++) {
     const symbol = queue[i];
@@ -344,9 +266,28 @@ async function main() {
        * the levels themselves. That is the honest division: the zone is a
        * fact about closed candles, where price sits relative to it is a fact
        * about now.
+       *
+       * All of which assumed today's bar exists. On the free data plan it
+       * does not — a range request through today returns 200 with the series
+       * truncated at the prior close, so `--after-open` was reading yesterday
+       * as "now" AND dropping a completed bar it mistook for a forming one,
+       * putting trend classification two sessions behind. Ask the bar what
+       * session it covers instead of assuming.
        */
-      const price = daily.at(-1)!.c;
-      const settled = afterOpen ? daily.slice(0, -1) : daily;
+      const lastBar = daily.at(-1)!;
+      const { session, lastIsToday, forming } = barState(lastBar.t, new Date());
+
+      if (afterOpen && !lastIsToday) {
+        // The intraday pass exists to price zones against a live mark. Without
+        // today's bar there is no live mark, and rewriting yesterday's numbers
+        // would just restate what the evening sweep already stored.
+        stale.push(symbol);
+        console.log(`${tag} last bar ${session}, not today — no live mark, skipped`);
+        continue;
+      }
+
+      const price = lastBar.c;
+      const settled = forming ? daily.slice(0, -1) : daily;
       const { trend, ma } = classifyTrend(settled);
 
       /**
@@ -504,7 +445,14 @@ async function main() {
   if (watch.length) await post({ kind: "wishlist", items: watch });
 
   const nearCount = pass.filter((p) => p.nearZone).length;
-  const degraded = failed.length > queue.length / 4;
+  /**
+   * An intraday pass that priced nothing did not do its job, whatever the
+   * exit code says. That is a degraded run — the same standard as a sweep
+   * that wrote no zones, and for the same reason: reporting green while
+   * refreshing nothing is the silence this project keeps removing.
+   */
+  const allStale = afterOpen && stale.length === queue.length;
+  const degraded = failed.length > queue.length / 4 || allStale;
 
   await post({
     kind: "run",
@@ -515,6 +463,10 @@ async function main() {
       `${pass.length}/${queue.length} swept, ${zonesWritten} zones kept, ` +
       `${brokenReported} broken, ${ideasExpired} ideas expired, ` +
       `${nearCount} within ${NEAR_ZONE_PCT}%` +
+      (stale.length
+        ? `. ${stale.length} had no bar for today, so carry no live mark` +
+          (allStale ? " — the data plan does not include the current session" : "")
+        : "") +
       (failed.length
         ? `. Failed: ${failed.map((f) => f.symbol).join(", ")}`
         : ""),
@@ -529,6 +481,16 @@ async function main() {
   );
   if (failed.length) {
     console.log(`${failed.length} failed: ${failed.map((f) => f.symbol).join(", ")}`);
+  }
+  if (stale.length) {
+    console.log(
+      `${stale.length} skipped — no bar for today, so no live mark to price against` +
+        (allStale
+          ? `.\nEvery symbol was stale: the data plan does not include the current ` +
+            `session, so --after-open cannot do what it exists to do. The evening ` +
+            `sweep's distances stand.`
+          : `: ${stale.slice(0, 12).join(", ")}${stale.length > 12 ? "…" : ""}`),
+    );
   }
   /**
    * Report the few worth a look, not everything that happens to be near a

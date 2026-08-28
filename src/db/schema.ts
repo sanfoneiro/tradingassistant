@@ -10,6 +10,8 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  date,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 /* ------------------------------------------------------------------ *
@@ -692,3 +694,32 @@ export const signalOutcomes = pgTable("signal_outcomes", {
   note: text("note"),
   computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
 });
+
+/* ------------------------------------------------------------------ *
+ * Daily bars — the universe stops being bandwidth-bound
+ * ------------------------------------------------------------------ */
+
+/**
+ * One grouped-daily call returns every US ticker for a session, so the
+ * ~115-name universe was never a judgement about which names matter — it was
+ * what five requests a minute could afford. Holding bars locally moves the
+ * limit to storage and lets the sweep read from disk instead of the wire.
+ *
+ * `d` is the SESSION DATE in New York terms, deliberately not a timestamp.
+ * Grouped daily stamps a bar at 20:00 UTC and the per-ticker endpoint stamps
+ * the same bar at midnight ET — identical OHLCV, sixteen hours apart. A date
+ * column makes that difference unrepresentable rather than merely handled.
+ */
+export const bars = pgTable(
+  "bars",
+  {
+    symbol: text("symbol").notNull(),
+    d: date("d").notNull(),
+    o: doublePrecision("o").notNull(),
+    h: doublePrecision("h").notNull(),
+    l: doublePrecision("l").notNull(),
+    c: doublePrecision("c").notNull(),
+    v: doublePrecision("v"),
+  },
+  (t) => [primaryKey({ columns: [t.symbol, t.d] }), index("bars_d_idx").on(t.d)],
+);
