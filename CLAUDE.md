@@ -112,10 +112,28 @@ survive the round trip, at most the concentration cap. **When the window is
 empty the trade is not takeable** — which is a different answer from "take it
 smaller", and an unsizeable setup should never be graded at all.
 
-The cap is **15% of the sizing base, 20% for an A_plus and only when 15% will
-not carry the trade**. Oron's numbers, chosen after research put the
-professional range at 10–20%; 15% is also what falls out of a 1% risk rule
-against a 6% portfolio-heat ceiling (six slots). Do not change it silently.
+The cap is **deployment divided by slots**, not a standalone number, and
+`sizingPolicy()` in `metrics.ts` derives it. Two ceilings are the real rule
+and neither moves: **6% portfolio heat** and **90% deployed**. At six slots
+those give 15% and 20% for an A_plus — Oron's original numbers, chosen after
+research put the professional range at 10–20%.
+
+**Since 2026-09-01 the book runs at most TWO concurrent positions**, so the
+same ceilings give **45%, 60% for an A_plus, and risk of 1% or 2% on an
+A_plus** (two slots at 2% is 4% heat, inside the 6%). This is not a decision
+to concentrate — it is a decision to run fewer slots, and the cap followed.
+
+The old cap was also **understating the risk it claimed to enforce**: a 4%
+stop on a $180 share against a $7,600 base was cut to 6 shares, risking $43
+— 0.57%, not the 1% the rule said — with the $4 round trip eating 9.3% of
+the risk budget. Two slots make it 19 shares, $137, and 2.9%.
+
+The test asserts by **exact equality** that `sizingPolicy(6)` still returns
+15%/20%/1%, so this is a generalisation of the old rule and not a replacement
+for it. Change a ceiling or the slot count and re-check that test. Do not
+change either silently. `npm run rules:sizing-policy -- --revert` puts the
+six-slot rules back. The 2% A_plus allowance is Oron's number and has no
+closed trade behind it yet.
 
 ### Ranking is not grading
 
@@ -309,6 +327,9 @@ src/db/sync-calendars.ts  the catalyst calendar (earnings, macro, ex-div)
 src/db/backfill-bars.ts   grouped daily -> the bars table
 src/db/watch-positions.ts news + scheduled events for what we already hold
 src/db/score-signals.ts  scores every suggestion, taken or not
+src/db/snapshot.ts     local JSON backup of what humans and agents WROTE;
+                       gitignored — this repo is PUBLIC and it holds P/L
+src/db/set-sizing-policy.ts  the slot-count switch, forward and --revert
 src/app/api/ingest     the only write path agents use
 src/app/(app)/guide    how the system works, for the person trading with it
 docs/AGENTS.md         payload contracts and agent prompts

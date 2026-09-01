@@ -23,7 +23,9 @@
     "signals:score": "tsx --env-file=.env src/db/score-signals.ts",
     "calendars:sync": "tsx --env-file=.env src/db/sync-calendars.ts",
     "bars:backfill": "tsx --env-file=.env src/db/backfill-bars.ts",
-    "positions:watch": "tsx --env-file=.env src/db/watch-positions.ts"
+    "positions:watch": "tsx --env-file=.env src/db/watch-positions.ts",
+    "db:snapshot": "tsx --env-file=.env src/db/snapshot.ts",
+    "rules:sizing-policy": "tsx --env-file=.env src/db/set-sizing-policy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",

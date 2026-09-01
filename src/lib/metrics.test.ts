@@ -12,6 +12,10 @@ import {
   CONCENTRATION_CAP,
   CONCENTRATION_CAP_APLUS,
   checkStopPlacement,
+  sizingPolicy,
+  HEAT_CEILING,
+  DEPLOYMENT_CEILING,
+  BASELINE_SLOTS,
 } from "./metrics";
 
 /**
@@ -731,5 +735,81 @@ describe("checkStopPlacement — both halves of rule 8", () => {
     expect(
       checkStopPlacement({ side: "short", entry: 100, stop: 101, structuralLevel: 102, adr: 3 }).ok,
     ).toBe(false);
+  });
+});
+
+describe("sizingPolicy — the cap is heat divided by slots", () => {
+  /* The whole claim of this function is that it is a GENERALISATION of the
+   * rule already in force, not a replacement for it. If that is not true the
+   * change is a silent loosening of risk, so it is asserted first and by
+   * exact equality rather than by a tolerance. */
+  it("reproduces today's rule exactly at six slots", () => {
+    const p = sizingPolicy(BASELINE_SLOTS);
+    expect(p.concentrationPct).toBe(CONCENTRATION_CAP);
+    expect(p.concentrationPctAplus).toBe(CONCENTRATION_CAP_APLUS);
+    expect(p.maxRiskPct).toBe(0.01);
+  });
+
+  it("conserves heat at every slot count", () => {
+    for (const n of [1, 2, 3, 4, 6, 8, 12]) {
+      const p = sizingPolicy(n);
+      expect(p.maxRiskPct * n).toBeCloseTo(HEAT_CEILING, 6);
+    }
+  });
+
+  it("never lets full deployment exceed the account", () => {
+    for (const n of [1, 2, 3, 4, 6, 8, 12]) {
+      expect(sizingPolicy(n).deployedIfFull).toBeLessThanOrEqual(1);
+      expect(sizingPolicy(n).deployedIfFull).toBeCloseTo(DEPLOYMENT_CEILING, 6);
+    }
+  });
+
+  it("raises the cap as slots fall, and clamps the A_plus stretch at the account", () => {
+    expect(sizingPolicy(2).concentrationPct).toBe(0.45);
+    expect(sizingPolicy(3).concentrationPct).toBe(0.3);
+    expect(sizingPolicy(2).concentrationPct).toBeGreaterThan(sizingPolicy(6).concentrationPct);
+    // 0.9 x 4/3 is 1.2, which is not a thing you can deploy.
+    expect(sizingPolicy(1).concentrationPctAplus).toBe(1);
+  });
+
+  it("refuses a slot count that is not a whole position", () => {
+    expect(() => sizingPolicy(0)).toThrow();
+    expect(() => sizingPolicy(-1)).toThrow();
+    expect(() => sizingPolicy(2.5)).toThrow();
+  });
+
+  /* The reason the change exists. A 4% stop on a $180 share is an ordinary
+   * big-tech setup, and under six slots the cap cuts it to six shares — at
+   * which point the $4 round trip eats 9% of the risk budget and the position
+   * risks 0.57% while claiming to risk 1%. Fewer slots fixes both. */
+  describe("a 4% stop on a $180 share, $7,600 base", () => {
+    const setup = { entry: 180, stop: 172.8, target: 201.6, base: 7600 };
+    const six = positionSize({ ...setup, riskPct: 0.01, concentrationPct: sizingPolicy(6).concentrationPct });
+    const two = positionSize({ ...setup, riskPct: 0.02, concentrationPct: sizingPolicy(2).concentrationPct });
+
+    it("is bound by concentration under either policy", () => {
+      expect(six.boundBy).toBe("concentration");
+      expect(two.boundBy).toBe("concentration");
+    });
+
+    it("risks well under the stated 1% at six slots", () => {
+      expect(six.shares).toBe(6);
+      near(six.riskPctOfBase, 0.0057, 0.0002);
+    });
+
+    it("actually reaches the intended risk at two slots", () => {
+      expect(two.shares).toBe(19);
+      near(two.riskPctOfBase, 0.018, 0.0005);
+    });
+
+    it("cuts the fee drag on the risk budget from ~9% to ~3%", () => {
+      expect(4 / six.riskUsd).toBeGreaterThan(0.09);
+      expect(4 / two.riskUsd).toBeLessThan(0.03);
+    });
+
+    it("improves net R:R, because the fixed $4 is spread over more shares", () => {
+      expect(two.netRR!).toBeGreaterThan(six.netRR!);
+      expect(six.netRR!).toBeGreaterThan(2);
+    });
   });
 });

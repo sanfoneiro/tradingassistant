@@ -438,6 +438,73 @@ export const CONCENTRATION_CAP = 0.15;
 /** An A+ may stretch to this, and only when 15% will not carry the trade. */
 export const CONCENTRATION_CAP_APLUS = 0.2;
 
+/* ------------------------------------------------------------------ *
+ * The cap is a function of how many slots you run
+ * ------------------------------------------------------------------ */
+
+/** Most of the account that may be at risk across ALL open positions at once.
+ *  Sourced: the 1% risk rule was chosen against this ceiling, six slots deep. */
+export const HEAT_CEILING = 0.06;
+/** The slot count the 15%/20% caps were written for. */
+export const BASELINE_SLOTS = 6;
+/** Most of the account that may be DEPLOYED across all slots at once.
+ *  DERIVED, not independently sourced: it is 0.15 x 6, read back out of the
+ *  cap that already exists. Recorded as its own number so that the derivation
+ *  is visible and can be argued with, rather than hidden inside a division. */
+export const DEPLOYMENT_CEILING = 0.9;
+/** How far an A_plus stretches past the ordinary cap — 0.20/0.15, kept as a
+ *  ratio so the stretch survives a change of slot count. */
+export const APLUS_STRETCH = CONCENTRATION_CAP_APLUS / CONCENTRATION_CAP;
+
+export type SizingPolicy = {
+  maxSlots: number;
+  /** Cap on one name, at this slot count. */
+  concentrationPct: number;
+  /** The A_plus stretch, still only when the ordinary cap will not carry it. */
+  concentrationPctAplus: number;
+  /** Most that may be risked on one position, so that heat is conserved. */
+  maxRiskPct: number;
+  /** What is deployed if every slot is full at the cap. Never above 1. */
+  deployedIfFull: number;
+};
+
+const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+
+/**
+ * Concentration is not a fact about a single position. It is `heat / slots`
+ * and `deployment / slots`, and the 15% cap is what those give at six slots.
+ *
+ * That matters because narrowing the book to one or two names at a time is
+ * not a decision to concentrate — it is a decision to run fewer slots, and
+ * the cap should follow. Six slots at 15% and two slots at 45% carry the SAME
+ * total exposure; what must never move is the heat ceiling and the deployment
+ * ceiling, which is exactly what this function holds fixed.
+ *
+ * The property that makes this safe to adopt: `sizingPolicy(6)` returns the
+ * numbers already in force. It is a generalisation of the existing rule, not
+ * a new one, and the tests assert that rather than trusting the arithmetic.
+ *
+ * Note what it does NOT do: it caps `maxRiskPct` but does not raise the risk
+ * actually taken. Risking 3% on one of two slots is permitted by heat and is
+ * still a separate decision; `positionSize` is told the risk, never guesses.
+ */
+export function sizingPolicy(maxSlots: number): SizingPolicy {
+  if (!Number.isInteger(maxSlots) || maxSlots < 1)
+    throw new Error(
+      `maxSlots must be a whole number of positions, got ${maxSlots} — ` +
+        `a fractional slot has no meaning and a policy is not worth guessing at`,
+    );
+
+  const concentrationPct = round4(Math.min(DEPLOYMENT_CEILING / maxSlots, 1));
+  return {
+    maxSlots,
+    concentrationPct,
+    concentrationPctAplus: round4(Math.min(concentrationPct * APLUS_STRETCH, 1)),
+    maxRiskPct: round4(HEAT_CEILING / maxSlots),
+    deployedIfFull: round4(concentrationPct * maxSlots),
+  };
+}
+
 export type Sizing = {
   shares: number;
   sizeUsd: number;

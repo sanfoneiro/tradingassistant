@@ -24,3 +24,8 @@ _to_delete/
 
 # Local Claude Code settings — machine-specific, and this repo is public
 .claude/settings.local.json
+
+# Database snapshots (npm run db:snapshot). These contain the account balance,
+# open positions, fills and P/L — and this repository is PUBLIC. The snapshot
+# is a local revert point, not a committed one.
+backups/
