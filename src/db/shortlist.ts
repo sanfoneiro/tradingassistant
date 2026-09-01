@@ -38,20 +38,18 @@
  *   npm run shortlist                 the default mega-cap tech candidates
  *   npm run shortlist -- AAPL MSFT    an explicit list
  */
-import { inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from ".";
-import { bars as barsTable } from "./schema";
+import { readBars } from "./read-bars";
+import { toWeekly, type Bar } from "../lib/zones";
+import { summariseReplays } from "../lib/replay";
 import {
-  computeZonesDetailed,
-  toWeekly,
-  type Bar,
-  type Zone,
-} from "../lib/zones";
-import {
-  replaySignal,
-  summariseReplays,
-  type ReplayResult,
-} from "../lib/replay";
+  replayZones,
+  TARGET_R,
+  FEES,
+  TRIGGER_WINDOW,
+  RESOLVE_WINDOW,
+} from "../lib/zone-backtest";
 import { positionSize, sizingPolicy } from "../lib/metrics";
 
 const DEFAULT = [
@@ -64,102 +62,20 @@ const ADR_LOOKBACK = 60;
 const CORR_LOOKBACK = 250;
 const GAP_THRESHOLD = 2;
 const MAX_SLOTS = 2;
-/** Sessions price has to come back to the level before the idea is abandoned.
- *  Longer than replay's default of 10, because a wishlist entry legitimately
- *  waits: `triggeredAt` exists precisely so "at its level since Tuesday" is
- *  answerable. `never_triggered` at 60 means price genuinely never returned. */
-const TRIGGER_WINDOW = 60;
-/** Sessions after filling to reach target or stop. A days-to-weeks hold, and
- *  a B-grade's time stop is 8-10, so twenty is generous rather than tight. */
-const RESOLVE_WINDOW = 20;
-const TARGET_R = 3;
-const FEES = 4;
 /** Below this the win rate is a coin flip with a decimal point on it. */
 const MIN_DECIDED = 15;
 
-const median = (xs: number[]) => {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
-
-/**
- * A rolling range floor, in dollars, at each bar.
- *
- * This has to be LOCAL. A single ADR taken at today's price and applied to a
- * zone that formed two years ago produced a 33.9% stop on MU and 23.4% on
- * INTC — the biggest movers in the list, which is the tell. The floor must be
- * the volatility that existed when the zone did.
- */
-function rollingRange(bars: Bar[], lookback = 20): number[] {
-  const out: number[] = [];
-  let sum = 0;
-  for (let i = 0; i < bars.length; i++) {
-    sum += (bars[i].h - bars[i].l) / bars[i].c;
-    if (i >= lookback) sum -= (bars[i - lookback].h - bars[i - lookback].l) / bars[i - lookback].c;
-    const n = Math.min(i + 1, lookback);
-    out.push((sum / n) * bars[i].c);
-  }
-  return out;
-}
-
-/** The trade a zone implies: proximal edge in, distal edge out, rule 8 floor. */
-function signalFor(z: Zone, adr: number) {
-  const long = z.direction === "demand";
-  const entry = z.entry;
-  const risk = Math.max(Math.abs(entry - z.sl), adr);
-  if (!(risk > 0) || !(entry > 0)) return null;
-  return {
-    signal: {
-      symbol: "",
-      side: (long ? "long" : "short") as "long" | "short",
-      entryLow: entry,
-      entryHigh: entry,
-      stop: long ? entry - risk : entry + risk,
-      target: long ? entry + TARGET_R * risk : entry - TARGET_R * risk,
-    },
-    riskPct: (risk / entry) * 100,
-  };
-}
-
+/** The per-name view of the shared replay: the summary plus the median stop. */
 function backtest(bars: Bar[], riskBudget: number) {
-  const rangeAt = rollingRange(bars);
-  const { live, broken } = computeZonesDetailed(bars, {
-    maxZones: Number.MAX_SAFE_INTEGER,
-    // The ORIGINAL box. A shrunken proximal edge is hindsight: at the moment
-    // the zone formed, nothing had penetrated it yet.
-    updateZones: false,
-  });
-  const zones = [...live, ...broken.map((b) => b.zone)];
-  const idxOf = new Map(bars.map((b, i) => [b.t, i]));
-
-  const results: ReplayResult[] = [];
-  const riskPcts: number[] = [];
-
-  for (const z of zones) {
-    const ci = idxOf.get(z.createdAt);
-    if (ci == null) continue;
-    // createdAt is the candidate bar; bars[ci + 2] confirms it. Nothing is
-    // tradeable until the bar after confirmation.
-    const from = ci + 3;
-    if (from >= bars.length) continue;
-
-    // The floor as it stood when the zone was confirmed, not as it stands now.
-    const s = signalFor(z, rangeAt[ci + 2]);
-    if (!s) continue;
-    riskPcts.push(s.riskPct);
-
-    results.push(
-      replaySignal(s.signal, bars.slice(from), {
-        triggerWindow: TRIGGER_WINDOW,
-        resolveWindow: RESOLVE_WINDOW,
-        fees: FEES,
-        riskBudget,
-      }),
-    );
-  }
-  return { summary: summariseReplays(results), riskPct: median(riskPcts) };
+  const trades = replayZones("", bars, { riskBudget });
+  const risks = trades.map((t) => t.riskPct).sort((a, b) => a - b);
+  const m = Math.floor(risks.length / 2);
+  return {
+    summary: summariseReplays(trades.map((t) => t.result)),
+    riskPct: risks.length
+      ? risks.length % 2 ? risks[m] : (risks[m - 1] + risks[m]) / 2
+      : null,
+  };
 }
 
 function corr(a: number[], b: number[]) {
@@ -206,29 +122,6 @@ function alignedReturns(a: Bar[], b: Bar[], lookback: number) {
   return { x: x.slice(-lookback), y: y.slice(-lookback), overlap: common.length };
 }
 
-async function loadBars(symbols: string[]) {
-  // inArray, not sql`= any(...)`: drizzle expands a JS array into a tuple,
-  // which Postgres rejects as the right side of ANY.
-  const rows = await db
-    .select()
-    .from(barsTable)
-    .where(inArray(barsTable.symbol, symbols))
-    .orderBy(barsTable.symbol, barsTable.d);
-
-  const by = new Map<string, Bar[]>();
-  for (const row of rows) {
-    if (!by.has(row.symbol)) by.set(row.symbol, []);
-    by.get(row.symbol)!.push({
-      t: Date.parse(row.d + "T00:00:00Z"),
-      o: row.o,
-      h: row.h,
-      l: row.l,
-      c: row.c,
-    });
-  }
-  return by;
-}
-
 async function main() {
   const args = process.argv.slice(2).filter((a) => !a.startsWith("-"));
   const symbols = args.length ? args.map((s) => s.toUpperCase()) : DEFAULT;
@@ -238,7 +131,7 @@ async function main() {
   const policy = sizingPolicy(MAX_SLOTS);
   const riskBudget = base * 0.01;
 
-  const bars = await loadBars([...symbols, BENCH]);
+  const bars = await readBars([...symbols, BENCH]);
   const bench = bars.get(BENCH);
   if (!bench) throw new Error(`no stored bars for ${BENCH} — run bars:backfill`);
   const asOf = new Date(bench.at(-1)!.t).toISOString().slice(0, 10);

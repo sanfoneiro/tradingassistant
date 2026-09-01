@@ -155,6 +155,39 @@ with-trend candidates do not out-earn countertrend ones once trades close, this
 scoring was wrong. `scoreReasons` is stored so a later review can ask what a
 number was claiming.
 
+**First falsification attempt, 2026-09-02 — `npm run trend:split`.** Every
+zone in two years of stored bars replayed as the trade it implies, split by
+the quadrant it sat in at the time (classified on bars up to the confirming
+bar, never the full series). 575 decided outcomes across 23 mega-cap tech
+names:
+
+| bucket | win% | totR | n |
+|---|---|---|---|
+| with-trend | 23.4% | −27.7R | 320 |
+| countertrend | 22.7% | −22.7R | 207 |
+| contested | 33.3% | +15.8R | 48 |
+
+**with-trend vs countertrend is z=0.19 — no detectable difference.** The 50
+against 5 has no support here. Do NOT read that as a reason to change the
+weights: a null result is not evidence the ordering is backwards, and this
+measures the zone plus a trend read with no rejection requirement, no
+fundamental veto and no grade. It says the trend filter is unproven, not
+that it is wrong.
+
+What DID separate is direction, not trend: demand 28.1% against supply
+18.8%, z=2.59. Both demand quadrants land on 27.3% while both supply
+quadrants sit below 20% — so the line the data draws runs long/short, not
+with/counter. **That result is confounded and cannot be banked:** QQQ
+returned 53.0% across the same window. A long-side edge measured on a
+rising tape is not separable from the tape, and the store contains no real
+downtrend to separate it with.
+
+The contested veto is the one worth revisiting. `rank.ts` guarantees no
+contested name can clear the bar, so live data can NEVER test it — the veto
+prevents the evidence. Here contested resolved best of the three at 33.3%,
+though on 48 outcomes and z=−1.48 against with-trend, which is not enough
+to act on. It is enough to stop treating the veto as free.
+
 ---
 
 ## The zone engine
