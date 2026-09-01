@@ -203,6 +203,47 @@ async function main() {
     );
   }
 
+  /**
+   * The comparison that decides it: trend, holding direction fixed.
+   *
+   * The headline with-trend edge is not safe to read, because the two buckets
+   * are not made of the same thing. With-trend is up_demand plus down_supply,
+   * which is mostly LONGS; countertrend is up_supply plus down_demand, which
+   * is mostly SHORTS. Across a tape that rose 53%, a bucket holding more
+   * longs wins for a reason that has nothing to do with the trend filter.
+   *
+   * So compare like with like — with-trend longs against countertrend longs,
+   * with-trend shorts against countertrend shorts. If the effect survives
+   * both, the filter is doing work. If it collapses, the headline was
+   * composition and the weight is measuring the direction of the sample.
+   */
+  console.log("\n=== Trend, holding direction fixed ===");
+  const q = (name: Quadrant) => {
+    const t = tally(classified.filter((x) => x.quadrant === name));
+    return { wins: t.W, losses: t.L };
+  };
+  const longMix = classified.filter((t) => t.side === "long").length / classified.length;
+  const withLong =
+    withT.filter((t) => t.side === "long").length / (withT.length || 1);
+  const counterLong =
+    counter.filter((t) => t.side === "long").length / (counter.length || 1);
+  console.log(
+    `  with-trend is ${(withLong * 100).toFixed(0)}% long, countertrend is ` +
+      `${(counterLong * 100).toFixed(0)}% long (sample overall ` +
+      `${(longMix * 100).toFixed(0)}%) — so the headline compares two ` +
+      `different direction mixes across a rising tape.`,
+  );
+  verdict(
+    "LONGS only: up_demand vs down_demand",
+    compareRates(q("up_demand"), q("down_demand")),
+    "the trend filter helps on the long side",
+  );
+  verdict(
+    "SHORTS only: down_supply vs up_supply",
+    compareRates(q("down_supply"), q("up_supply")),
+    "the trend filter helps on the short side",
+  );
+
   const all = tally(classified);
   console.log(
     `\nBreakeven at ${TARGET_R}R is ${(100 / (TARGET_R + 1)).toFixed(0)}% gross. ` +

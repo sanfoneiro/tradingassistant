@@ -155,41 +155,52 @@ with-trend candidates do not out-earn countertrend ones once trades close, this
 scoring was wrong. `scoreReasons` is stored so a later review can ask what a
 number was claiming.
 
-**First falsification attempt, 2026-09-02 — `npm run trend:split`.** Every
-zone in two years of stored bars replayed as the trade it implies, split by
-the quadrant it sat in at the time (classified on bars up to the confirming
-bar, never the full series). 575 decided outcomes across 23 mega-cap tech
-names:
+**First falsification attempt, 2026-09-02 — `npm run trend:split -- --wide`.**
+Every zone across 300 symbols with enough history, replayed as the trade it
+implies and tagged with the quadrant it sat in AT THE TIME (classified on
+bars up to the confirming bar only). 6,476 decided outcomes:
 
 | bucket | win% | totR | n |
 |---|---|---|---|
-| with-trend | 23.4% | −27.7R | 320 |
-| countertrend | 22.7% | −22.7R | 207 |
-| contested | 33.3% | +15.8R | 48 |
+| with-trend | 25.1% | +109R | 3,203 |
+| countertrend | 21.7% | -343.9R | 2,665 |
+| contested | 27.3% | +53R | 608 |
 
-**with-trend vs countertrend is z=0.19 — no detectable difference.** The 50
-against 5 has no support here. Do NOT read that as a reason to change the
-weights: a null result is not evidence the ordering is backwards, and this
-measures the zone plus a trend read with no rejection requirement, no
-fundamental veto and no grade. It says the trend filter is unproven, not
-that it is wrong.
+That reads as support — z=3.06. **It is not.** The two buckets are not made
+of the same thing: with-trend is 66% long (up_demand + down_supply),
+countertrend is 39% long (up_supply + down_demand), and QQQ returned 53.0%
+across the sample. A bucket holding more longs wins on that tape for reasons
+having nothing to do with the trend filter.
 
-What DID separate is direction, not trend: demand 28.1% against supply
-18.8%, z=2.59. Both demand quadrants land on 27.3% while both supply
-quadrants sit below 20% — so the line the data draws runs long/short, not
-with/counter. **That result is confounded and cannot be banked:** QQQ
-returned 53.0% across the same window. A long-side edge measured on a
-rising tape is not separable from the tape, and the store contains no real
-downtrend to separate it with.
+Holding direction fixed, the effect collapses:
 
-The contested veto is the one worth revisiting. `rank.ts` guarantees no
-contested name can clear the bar, so live data can NEVER test it — the veto
-prevents the evidence. Here contested resolved best of the three at 33.3%,
-though on 48 outcomes and z=−1.48 against with-trend, which is not enough
-to act on. It is enough to stop treating the veto as free.
+| comparison | with | counter | z |
+|---|---|---|---|
+| longs — up_demand vs down_demand | 27.7% | 26.0% | **1.00** |
+| shorts — down_supply vs up_supply | 20.3% | 19.3% | **0.64** |
 
----
+**The with-trend edge is composition, not the filter.** What actually
+separates is direction: demand 27.6% against supply 20.0%, z=7.20 — and
+that is confounded by the same 53% tape and cannot be banked either. The
+store holds no real downtrend to separate them with.
 
+Do NOT rewrite the weights on this. It is a null about a filter measured
+with no rejection requirement, no fundamental veto and no grade — it says
+the 50-against-5 is unproven, not that it is backwards. But it is no longer
+true that the quadrant model is "the one thing here that is not a guess",
+and `rank.ts` should stop saying so.
+
+Run it narrow (23 tech names, 575 outcomes) and with-trend vs countertrend
+is z=0.19. Run it wide and it is z=3.06. Neither survives the direction
+control. **One run of this at one width is not evidence** — the narrow
+sample was underpowered and the wide one was confounded, and only comparing
+them showed which was which.
+
+The contested veto is the finding worth acting on. `rank.ts` guarantees no
+contested name clears the bar, so live data can NEVER test it — the veto
+prevents its own evidence. Contested resolved at 27.3% on 608 outcomes, the
+HIGHEST of the three buckets, though z=-1.13 against with-trend is not
+enough to act on. It is enough to stop calling the veto free.
 ## The zone engine
 
 `src/lib/zones.ts` is a verified port of Oron's MTF Supply & Demand Pine
