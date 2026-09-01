@@ -25,7 +25,8 @@
     "bars:backfill": "tsx --env-file=.env src/db/backfill-bars.ts",
     "positions:watch": "tsx --env-file=.env src/db/watch-positions.ts",
     "db:snapshot": "tsx --env-file=.env src/db/snapshot.ts",
-    "rules:sizing-policy": "tsx --env-file=.env src/db/set-sizing-policy.ts"
+    "rules:sizing-policy": "tsx --env-file=.env src/db/set-sizing-policy.ts",
+    "shortlist": "tsx --env-file=.env src/db/shortlist.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
