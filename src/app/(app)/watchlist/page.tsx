@@ -4,6 +4,7 @@ import { wishlist, zones, screenerCoverage } from "@/db/schema";
 import { Panel, Badge, Empty, Stat } from "@/components/ui";
 import { num, ageLabel } from "@/lib/format";
 import { safe, dbConfigured } from "@/lib/safe";
+import { loadFocus, splitByFocus } from "@/lib/focus";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,8 @@ export default async function WatchlistPage() {
       db.select().from(screenerCoverage).orderBy(screenerCoverage.analyzedAt),
     )) ?? [];
 
+  const focus = await loadFocus();
+
   const zoneById = new Map(allZones.map((z) => [z.id, z]));
   const live = allZones.filter((z) => z.status === "untested");
   const broken = allZones.filter((z) => z.status === "tested_broken");
@@ -41,6 +44,19 @@ export default async function WatchlistPage() {
     (a, b) => Math.abs(a.distancePct ?? 999) - Math.abs(b.distancePct ?? 999),
   );
 
+  /* Two lists, not one sorted list. The focus names are what Oron trades;
+   * everything else is the wide sample that exists to test whether the
+   * method works at all. Merging them into one table sorted by distance
+   * puts a name he will never size next to one he might, which is the
+   * confusion this split exists to remove. The wide sample stays on the
+   * page — it just stops competing for the top of it. */
+  const { core: focusWatch, rest: wideWatch } = splitByFocus(
+    sorted,
+    focus,
+    (w) => w.symbol,
+  );
+  const focusQuiet = focus.count - focusWatch.length;
+
   const hitRate =
     held.length + broken.length > 0
       ? (held.length / (held.length + broken.length)) * 100
@@ -49,7 +65,11 @@ export default async function WatchlistPage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Watching" value={String(watch.length)} sub="active names" />
+        <Stat
+          label="Watching"
+          value={String(watch.length)}
+          sub={`${focusWatch.length} on the focus list`}
+        />
         <Stat label="Live zones" value={String(live.length)} sub="untested" />
         <Stat
           label="Zone hit rate"
@@ -66,69 +86,43 @@ export default async function WatchlistPage() {
       </div>
 
       <Panel
-        title="Watchlist"
-        right={<span className="text-xs text-faint">closest to trigger first</span>}
+        title={`Focus list — ${focusWatch.length} at a level`}
+        right={
+          <span className="text-xs text-faint">
+            {focus.count} names, swept every day
+          </span>
+        }
       >
-        {sorted.length === 0 ? (
+        {focusWatch.length === 0 ? (
           <Empty>
-            Nothing being watched. The Screener adds names here when they are
+            None of the {focus.count} focus names is near a level today. That is
+            a normal morning, not a gap in coverage.
+          </Empty>
+        ) : (
+          <WatchTable rows={focusWatch} zoneById={zoneById} />
+        )}
+        {focusQuiet > 0 && focusWatch.length > 0 ? (
+          <p className="px-2 pt-3 text-xs text-faint">
+            {focusQuiet} of {focus.count} have nothing close.
+          </p>
+        ) : null}
+      </Panel>
+
+      <Panel
+        title={`Wide sample — ${wideWatch.length}`}
+        right={
+          <span className="text-xs text-faint">
+            what the filter returned — kept for measurement
+          </span>
+        }
+      >
+        {wideWatch.length === 0 ? (
+          <Empty>
+            Nothing else being watched. The sweep adds names here when they are
             near a level but not yet tradeable.
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-line text-[11px] tracking-wider text-faint uppercase">
-                  <th className="px-2 py-2 text-left">Symbol</th>
-                  <th className="px-2 py-2 text-left">Side</th>
-                  <th className="px-2 py-2 text-right">Trigger</th>
-                  <th className="px-2 py-2 text-right">Away</th>
-                  <th className="px-2 py-2 text-left">Zone</th>
-                  <th className="px-2 py-2 text-left">What has to happen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((w) => {
-                  const z = zoneById.get(w.zoneId ?? -1);
-                  const close = Math.abs(w.distancePct ?? 999) <= 1.5;
-                  return (
-                    <tr key={w.id} className="border-b border-line/60">
-                      <td className="px-2 py-2 font-semibold">{w.symbol}</td>
-                      <td className="px-2 py-2">
-                        {w.side ? (
-                          <Badge tone={w.side === "long" ? "up" : "down"}>
-                            {w.side}
-                          </Badge>
-                        ) : (
-                          <span className="text-faint">—</span>
-                        )}
-                      </td>
-                      <td className="tnum px-2 py-2 text-right text-dim">
-                        {w.triggerLevel == null
-                          ? "—"
-                          : `$${w.triggerLevel.toFixed(2)}`}
-                      </td>
-                      <td
-                        className={`tnum px-2 py-2 text-right ${close ? "text-warn" : "text-faint"}`}
-                      >
-                        {w.distancePct == null
-                          ? "—"
-                          : `${Math.abs(w.distancePct).toFixed(1)}%`}
-                      </td>
-                      <td className="px-2 py-2 text-xs text-dim">
-                        {z
-                          ? `${z.direction} ${z.low}–${z.high} (${z.timeframe})`
-                          : "—"}
-                      </td>
-                      <td className="px-2 py-2 text-xs text-dim">
-                        {w.triggerNote ?? w.thesis ?? "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <WatchTable rows={wideWatch} zoneById={zoneById} />
         )}
       </Panel>
 
@@ -252,6 +246,70 @@ export default async function WatchlistPage() {
           </div>
         )}
       </Panel>
+    </div>
+  );
+}
+
+type WishRow = typeof wishlist.$inferSelect;
+type ZoneRow = typeof zones.$inferSelect;
+
+/** One table, rendered twice. Two copies would drift the moment either
+ *  side gained a column. */
+function WatchTable({
+  rows,
+  zoneById,
+}: {
+  rows: WishRow[];
+  zoneById: Map<number, ZoneRow>;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-line text-[11px] tracking-wider text-faint uppercase">
+            <th className="px-2 py-2 text-left">Symbol</th>
+            <th className="px-2 py-2 text-left">Side</th>
+            <th className="px-2 py-2 text-right">Trigger</th>
+            <th className="px-2 py-2 text-right">Away</th>
+            <th className="px-2 py-2 text-left">Zone</th>
+            <th className="px-2 py-2 text-left">What has to happen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((w) => {
+            const z = zoneById.get(w.zoneId ?? -1);
+            const close = Math.abs(w.distancePct ?? 999) <= 1.5;
+            return (
+              <tr key={w.id} className="border-b border-line/60">
+                <td className="px-2 py-2 font-semibold">{w.symbol}</td>
+                <td className="px-2 py-2">
+                  {w.side ? (
+                    <Badge tone={w.side === "long" ? "up" : "down"}>{w.side}</Badge>
+                  ) : (
+                    <span className="text-faint">—</span>
+                  )}
+                </td>
+                <td className="tnum px-2 py-2 text-right text-dim">
+                  {w.triggerLevel == null ? "—" : `$${w.triggerLevel.toFixed(2)}`}
+                </td>
+                <td
+                  className={`tnum px-2 py-2 text-right ${close ? "text-warn" : "text-faint"}`}
+                >
+                  {w.distancePct == null
+                    ? "—"
+                    : `${Math.abs(w.distancePct).toFixed(1)}%`}
+                </td>
+                <td className="px-2 py-2 text-xs text-dim">
+                  {z ? `${z.direction} ${z.low}–${z.high} (${z.timeframe})` : "—"}
+                </td>
+                <td className="px-2 py-2 text-xs text-dim">
+                  {w.triggerNote ?? w.thesis ?? "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

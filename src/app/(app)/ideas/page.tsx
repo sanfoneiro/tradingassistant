@@ -4,6 +4,7 @@ import { suggestions, zones, rules } from "@/db/schema";
 import { Panel, Badge, Empty } from "@/components/ui";
 import { usd, num, QUADRANT_LABEL, GRADE_LABEL, ageLabel } from "@/lib/format";
 import { safe, dbConfigured } from "@/lib/safe";
+import { loadFocus, focusFirst, type Focus } from "@/lib/focus";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,8 @@ export default async function IdeasPage() {
   const allZones = (await safe(() => db.select().from(zones))) ?? [];
   const allRules = (await safe(() => db.select().from(rules))) ?? [];
 
+  const focus = await loadFocus();
+
   const zoneById = new Map(allZones.map((z) => [z.id, z]));
   const ruleByKey = new Map(allRules.map((r) => [r.key, r]));
 
@@ -35,9 +38,14 @@ export default async function IdeasPage() {
     s.status === "open" && (!s.expiresAt || s.expiresAt.getTime() > now);
 
   const open = rows.filter(isLive);
-  const actionable = open.filter((s) => (s.gatesFailed?.length ?? 0) === 0);
-  const blocked = open.filter((s) => (s.gatesFailed?.length ?? 0) > 0);
-  const dead = rows.filter((s) => !isLive(s));
+  /* Focus names lead every bucket. SORTED, not filtered — the wide sample
+   * is the thing that tells you whether the method works at all, so it
+   * stays on the page and merely stops competing for the top of it. */
+  const byFocus = <T extends { symbol: string }>(xs: T[]) =>
+    focusFirst(xs, focus, (x) => x.symbol);
+  const actionable = byFocus(open.filter((s) => (s.gatesFailed?.length ?? 0) === 0));
+  const blocked = byFocus(open.filter((s) => (s.gatesFailed?.length ?? 0) > 0));
+  const dead = byFocus(rows.filter((s) => !isLive(s)));
 
   return (
     <div className="space-y-5">
@@ -97,7 +105,12 @@ export default async function IdeasPage() {
             <tbody>
               {dead.slice(0, 25).map((s) => (
                 <tr key={s.id} className="border-b border-line/60">
-                  <td className="px-2 py-1.5 font-semibold">{s.symbol}</td>
+                  <td className="px-2 py-1.5 font-semibold">
+                    {s.symbol}
+                    {focus.has(s.symbol) && (
+                      <span className="ml-1.5 text-[10px] text-acc">●</span>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5 text-xs text-dim">
                     {s.grade ? GRADE_LABEL[s.grade] : "—"}
                   </td>
@@ -120,8 +133,10 @@ function Card({
   zone,
   ruleByKey,
   blocked,
+  focus,
 }: {
   s: typeof suggestions.$inferSelect;
+  focus?: Focus;
   zone?: typeof zones.$inferSelect;
   ruleByKey?: Map<string, typeof rules.$inferSelect>;
   blocked?: boolean;
@@ -134,6 +149,11 @@ function Card({
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-lg font-semibold">{s.symbol}</span>
+        {focus?.has(s.symbol) && (
+          <Badge tone="acc" title="On the focus list — swept every day whatever the screen returns">
+            focus
+          </Badge>
+        )}
         <Badge tone={s.side === "long" ? "up" : "down"}>{s.side}</Badge>
         {s.grade && (
           <Badge tone={GRADE_TONE[s.grade]}>{GRADE_LABEL[s.grade]}</Badge>
