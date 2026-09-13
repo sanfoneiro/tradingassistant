@@ -55,6 +55,40 @@ idea      price has arrived, so entry/stop/target/R:R are real
 trade     taken
 ```
 
+**The focus list is not the screen, and the two must not merge.**
+`screener_coverage` means exactly one thing: what the saved "EMA 200" screen
+returned this week. That is a FILTER — names enter and leave as they pass or
+fail it — so a name cannot be pinned there by hand, and bending the filter to
+include one would corrupt the wide sample that exists to test whether the
+method works at all.
+
+`core_symbols` is the other thing: eight names chosen deliberately and swept
+EVERY run whatever the filter returned. `buildQueue` puts them at the front,
+and that ordering is load-bearing — runs are capped, and a focus list that
+lands past the cap is a focus list that silently did nothing. A limit below
+the core count still truncates, but names what it dropped rather than
+reporting a clean sweep.
+
+Coverage rows are still written ONLY for names the screen carries, so a core
+name the filter does not return produces zones and wishlist entries but no
+coverage row — exactly as a `--wide` discovery does.
+
+The list travels through `/api/state`, NOT read from the database by the
+sweep. The sweep runs in GitHub Actions where there is no `DATABASE_URL`, so
+a core list reachable only with database credentials would silently do
+nothing in precisely the place it has to work. **It therefore does nothing
+until the app is deployed** — the CI sweep reads the deployed payload.
+
+The first eight (2026-09-14) came from `npm run shortlist` and NOT from
+backtested performance: every name there was statistically indistinguishable
+from every other. What separated them was tradeability on a $7,523 account —
+at least 8 shares at the 45% cap, under 15% of sessions gapping more than 2%
+from the prior close. **Both thresholds are round numbers that were proposed
+and accepted, not derived**, and the list is a function of ACCOUNT SIZE:
+MSFT, META, NVDA, AVGO and AMD were cut because $7,523 cannot size them with
+room to scale out, not because of anything about the companies. Re-run the
+shortlist when the base changes materially.
+
 `src/lib/funnel.ts` holds both thresholds. `/api/ingest` **rejects** a
 suggestion whose entry is more than `TRIGGER_BAND_PCT` (2%) from
 `currentPrice` — five percent away those numbers are a hypothesis, and the
@@ -366,6 +400,7 @@ src/lib/session.ts     what session a bar covers, and whether it is forming;
 src/lib/finviz.ts      earnings + economic calendars; empty means UNKNOWN
 src/lib/news.ts        ticker-scoped news; insight selected BY TICKER
 src/lib/ingest-client.ts  one definition of how a job authenticates
+src/lib/sweep-queue.ts the sweep's queue: focus list first, then the screen
 src/db/sweep-zones.ts  the universe sweep (runs in CI)
 src/db/sync-calendars.ts  the catalyst calendar (earnings, macro, ex-div)
 src/db/backfill-bars.ts   grouped daily -> the bars table
@@ -374,6 +409,9 @@ src/db/score-signals.ts  scores every suggestion, taken or not
 src/db/snapshot.ts     local JSON backup of what humans and agents WROTE;
                        gitignored — this repo is PUBLIC and it holds P/L
 src/db/set-sizing-policy.ts  the slot-count switch, forward and --revert
+src/db/core-list.ts    the focus list — show, --seed, --add, --remove
+src/db/shortlist.ts    per-name screen: tradeability, gaps, correlation
+src/db/trend-split.ts  does the trend filter earn its weight? (it does not)
 src/app/api/ingest     the only write path agents use
 src/app/(app)/guide    how the system works, for the person trading with it
 docs/AGENTS.md         payload contracts and agent prompts

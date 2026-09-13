@@ -18,6 +18,7 @@ import {
   type BreakSignal,
   type Quadrant,
 } from "../lib/rank";
+import { buildQueue } from "../lib/sweep-queue";
 import { etParts, barState, OPEN } from "../lib/session";
 import { APP_URL, resolveToken, makeClient } from "../lib/ingest-client";
 import postgres from "postgres";
@@ -63,6 +64,9 @@ const AFTER_OPEN_FROM = OPEN + 15;
 const AFTER_OPEN_TO = OPEN + 90;
 
 type State = {
+  /** The focus list, from /api/state. An older app deployment does not send
+   *  it, so this is optional: absent means no core list, never a crash. */
+  coreSymbols?: string[];
   screenerCoverage: {
     symbol: string;
     analyzedAt: string | null;
@@ -243,12 +247,32 @@ async function main() {
 
   // /api/state already returns coverage oldest-analysed first, nulls ahead
   // of everything, so the queue order is the app's and not reinvented here.
-  const queue = explicit.length
-    ? explicit
-    : wide
-      ? wideRows.map((r) => r.symbol).slice(0, limit)
-      : state.screenerCoverage.map((c) => c.symbol).slice(0, limit);
+  /**
+   * The focus list leads, then the screen (or the whole store under --wide).
+   * A core name is swept whether or not the EMA 200 filter returned it this
+   * week — which is the point of it, and why the list is a separate table
+   * rather than an edit to a filter that cannot be hand-edited.
+   */
+  const plan = buildQueue({
+    explicit,
+    core: state.coreSymbols ?? [],
+    base: wide
+      ? wideRows.map((r) => r.symbol)
+      : state.screenerCoverage.map((c) => c.symbol),
+    limit,
+  });
+  const queue = plan.queue;
   const never = state.screenerCoverage.filter((c) => !c.analyzedAt).length;
+
+  if (plan.dropped.length)
+    console.warn(
+      `WARNING: --limit ${limit} cut ${plan.dropped.length} name(s) off the ` +
+        `focus list: ${plan.dropped.join(", ")}. The list was NOT covered.`,
+    );
+  else if (plan.core.length)
+    console.log(
+      `focus list: ${plan.core.length} name(s) swept first — ${plan.core.join(", ")}`,
+    );
 
   /**
    * With --wide the queue is the bars store, not the saved screen. Coverage is

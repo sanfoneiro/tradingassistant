@@ -608,6 +608,19 @@ export const priceMarks = pgTable(
   (t) => [index("price_marks_symbol_idx").on(t.symbol, t.capturedAt)],
 );
 
+/**
+ * The focus list — deliberately chosen names, swept daily whatever the saved
+ * screen returns. Separate from screenerCoverage on purpose: that table means
+ * "what the EMA 200 FILTER returned", and a filter cannot be hand-edited
+ * without corrupting the wide sample the strategy is tested against.
+ */
+export const coreSymbols = pgTable("core_symbols", {
+  symbol: text("symbol").primaryKey(),
+  addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
+  /** Why it is on the list, so a later review can argue rather than guess. */
+  note: text("note"),
+});
+
 export const catalysts = pgTable("catalysts", {
   id: serial("id").primaryKey(),
   symbol: text("symbol"), // null = macro

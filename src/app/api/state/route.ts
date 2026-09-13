@@ -7,6 +7,7 @@ import {
   orders,
   zones,
   wishlist,
+  coreSymbols,
   screenerCoverage,
   suggestions,
   actionItems,
@@ -172,6 +173,18 @@ async function readState() {
      * anything on the screen that appears nowhere in it), so coverage
      * rotates instead of re-reading the same large-caps every session.
      */
+    /**
+     * The focus list — names the sweep must cover every day whatever the
+     * saved screen returned. Sent here rather than read from the database by
+     * the sweep, because the sweep runs in GitHub Actions where there is no
+     * DATABASE_URL: only the app URL and the ingest token. A core list only
+     * reachable with database credentials would silently do nothing in CI,
+     * which is exactly where it needs to work.
+     */
+    coreSymbols: (
+      await db.select().from(coreSymbols).orderBy(coreSymbols.symbol)
+    ).map((c) => c.symbol),
+
     screenerCoverage: (
       await db
         .select()
