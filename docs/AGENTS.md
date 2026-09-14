@@ -516,16 +516,47 @@ failure is the reason this project exists. Report what is missing and post a
 `run` with status "failed".
 
 STEP 1 — LOAD STATE
-GET /api/state. Check `asOf` and `lastRun` first; on 503 or a degraded last
+GET /api/state. `coreSymbols` is the focus list — eight names swept every
+day whatever the saved screen returned, and STEP 2 treats them differently.
+An empty or missing `coreSymbols` means no focus list, not an error.
+Check `asOf` and `lastRun` first; on 503 or a degraded last
 run, say "account state unavailable" and stop. Morning Sync is run MANUALLY
 and is deliberately unscheduled, so `markSource` may be "manual" and `asOf`
 may be old — if positions are open and `asOf` is stale, say so plainly rather
 than sizing silently against a book you cannot see.
 
 STEP 2 — SHORTLIST, DO NOT GRADE EVERYTHING
-From `wishlist`: |distancePct| <= 2 AND score >= 50 (WORTH_OPENING_A_CHART in
-src/lib/rank.ts). Sort by score, take at most the top 6. Typically ~50 sit in
-the band and ~15 clear the bar. `contested` cannot clear it by construction.
+Two sources, and the second is NOT filtered by score.
+
+  (a) THE WIDE SAMPLE. From `wishlist`: |distancePct| <= 2 AND score >= 50
+      (WORTH_OPENING_A_CHART in src/lib/rank.ts). Sort by score, take at
+      most the top 6. Typically ~50 sit in the band and ~15 clear the bar.
+      `contested` cannot clear it by construction.
+
+  (b) THE FOCUS LIST. Every symbol in `coreSymbols` from /api/state whose
+      wishlist row has |distancePct| <= 2 — WHATEVER ITS SCORE, and in
+      ADDITION to the six above, not instead of any of them. There are
+      eight names on the list and rarely more than three in the band, so
+      this is a handful of extra candidates, not a second full run.
+
+Why (b) exists. The score gate is a triage rule for ~270 names competing
+for attention; the focus list is eight names chosen deliberately, and the
+same cutoff applied to both means they simply vanish. On 2026-09-14 AMZN,
+AAPL and GOOGL were all sitting inside the band and none would have been
+graded — all three are `up_supply`, countertrend scores 5 against 50, and
+the best a countertrend setup can reach is 53.
+
+This does NOT lower the bar. A focus name that fails a gate posts as
+`blocked` with the failing gate named, exactly as any rejected candidate
+does — see STEP 5. The point is to produce a VERDICT rather than silence:
+"AAPL is at its level and here is why it is not takeable" is an answer,
+and an invisible candidate is not. It is also the only way the signal
+scorer ever sees these names, and a blocked signal that would have won is
+the sole evidence that a rule is too strict.
+
+Grade them the same way and to the same standard. Do not soften a veto, do
+not stretch a target, and do not mark one A_minus because it is on the
+list. If the honest verdict is C and blocked, post C and blocked.
 
 STEP 3 — VERIFY PRICES YOURSELF
 Fetch bars via src/lib/massive.ts and confirm each candidate ties out against

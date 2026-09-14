@@ -79,6 +79,21 @@ a core list reachable only with database credentials would silently do
 nothing in precisely the place it has to work. **It therefore does nothing
 until the app is deployed** — the CI sweep reads the deployed payload.
 
+**The grader treats the list differently too, and has to.** Its shortlist is
+`|distancePct| <= 2 AND score >= 50`, top 6 — a triage rule for ~270 names
+competing for attention. Applied to eight names chosen deliberately, the same
+cutoff just deletes them: on 2026-09-14 AMZN, AAPL and GOOGL were all inside
+the band and none would have been graded, because all three were `up_supply`
+and countertrend scores 5 against 50. So STEP 2 of the grader prompt now adds
+every focus name in the band REGARDLESS of score, on top of the six.
+
+That is not a lowered bar. A focus name failing a gate posts as `blocked`
+with the gate named, exactly as any rejected candidate does — the point is a
+verdict instead of silence, and it is the only way the signal scorer ever
+sees these names. Note the prompt lives in `docs/AGENTS.md` and the grader is
+a LOCAL task reading the working tree, so that change takes effect on the
+next run with no deploy.
+
 The first eight (2026-09-14) came from `npm run shortlist` and NOT from
 backtested performance: every name there was statistically indistinguishable
 from every other. What separated them was tradeability on a $7,523 account —
