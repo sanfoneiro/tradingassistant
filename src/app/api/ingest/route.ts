@@ -20,6 +20,7 @@ import { checkIngestToken } from "@/lib/auth";
 import { positionRisk } from "@/lib/metrics";
 import { TRIGGER_BAND_PCT, triggerStamp } from "@/lib/funnel";
 import { matchActionItem, unraisedItems } from "@/lib/action-items";
+import { replacedCatalysts } from "@/lib/catalyst-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -919,9 +920,7 @@ async function handleCatalysts(p: Extract<P, { kind: "catalysts" }>) {
     ? p.kinds
     : [...new Set(p.items.map((c) => c.kind))];
 
-  await db.execute(
-    sql`DELETE FROM catalysts WHERE event_at > NOW() AND kind = ANY(${kinds})`,
-  );
+  await db.delete(catalysts).where(replacedCatalysts(kinds));
   await db.insert(catalysts).values(
     p.items.map((c) => ({
       symbol: c.symbol,
