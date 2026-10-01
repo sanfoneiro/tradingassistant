@@ -496,24 +496,33 @@ a pointer to it, so editing the prompt below changes what the next run does —
 there is no second copy to keep in sync. Do not duplicate these instructions
 into the task itself.
 
-It runs locally because that is where the credentials are. `.agent-token` and
-`.env` are both gitignored, so a cloud runner has no way to read them; one was
-tried on 2026-08-25 and correctly refused to start. See "What runs, and where"
-in CLAUDE.md.
+It runs in TWO places from this one prompt: the local task on Oron's machine,
+and a cloud Routine that clones the repo. The difference is only where the
+secrets come from: locally from gitignored files, in the cloud from the
+environment's variables. A cloud run with neither correctly refused to start
+on 2026-08-25. See "What runs, and where" in CLAUDE.md.
 
 ```
 Grade trade-setup candidates and persist the verdicts.
 
-Repo: C:\Users\97250\Documents\Claude\Projects\tradingassistant
+Repo: the working tree you are in (locally
+      C:\Users\97250\Documents\Claude\Projects\tradingassistant)
 App:  https://project-alr3f.vercel.app
 
 STEP 0 — CREDENTIALS
-The ingest token is the 64-char value in `.agent-token` at the repo root.
-`.env`'s INGEST_TOKEN is stale (11 chars) and is overwritten by `vercel env
-pull` — always prefer the file. MASSIVE_API_KEY comes from `.env`.
-If either is missing, STOP. Do not substitute a price from web search — that
-failure is the reason this project exists. Report what is missing and post a
-`run` with status "failed".
+Two secrets, never printed, only their presence and length checked:
+  ingest token     64 chars. Locally: `.agent-token` at the repo root —
+                   `.env`'s INGEST_TOKEN is stale (11 chars) and is
+                   overwritten by `vercel env pull`, so prefer the file.
+                   In the cloud: the INGEST_TOKEN environment variable.
+  MASSIVE_API_KEY  locally from `.env`, in the cloud from the environment.
+`src/lib/ingest-client.ts` already resolves the token in that order. In the
+cloud there is no `.env`, so run scripts with `npx tsx <file>` rather than
+`npm run` — every npm script passes `--env-file=.env` and fails without it.
+If either secret is missing, or the token is not 64 chars, STOP. Do not
+substitute a price from web search — that failure is the reason this project
+exists. Report what is missing and post a `run` with status "failed" if the
+token works, or nothing at all if it does not.
 
 STEP 1 — LOAD STATE
 GET /api/state. `coreSymbols` is the focus list — eight names swept every
@@ -666,15 +675,13 @@ Read the app's reports. Produce:
 - one question the data raises about the trade-setup-grader skill's claims
 ```
 
-### Catalyst Calendar — Sun 18:00
+### Catalyst Calendar — NOT an agent
 
-```
-For every symbol in the book and the wishlist, find the next earnings date.
-Add CPI, PPI, NFP and FOMC for the coming fortnight. POST as `catalysts`.
-
-These drive two vetoes: no resting limit order through a binary event, and no
-new position within 48h of earnings unless the earnings is the trade.
-```
+Retired as an agent prompt. `src/db/sync-calendars.ts` runs in GitHub Actions
+(`.github/workflows/calendars.yml`, 21:30 UTC Sunday–Friday, 35 days ahead):
+no browser and no judgement, so it is a script. Its rows drive two vetoes —
+no resting limit order through a binary event, and no new position within
+48h of earnings unless the earnings is the trade.
 
 ---
 

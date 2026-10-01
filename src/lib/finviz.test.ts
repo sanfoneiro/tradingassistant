@@ -161,6 +161,43 @@ describe("completeness", () => {
   });
 });
 
+describe("market-cap ordering", () => {
+  const earningsPage = (caps: (number | undefined)[], total: number) =>
+    page({
+      initialSort: "-marketCap",
+      entries: {
+        items: caps.map((marketCap, i) => ({
+          earningsDate: "2026-10-29T16:30:00",
+          isEarningDateEstimate: true,
+          ticker: `T${i}`,
+          company: `Co ${i}`,
+          marketCap,
+        })),
+        totalItemsCount: total,
+      },
+    });
+
+  it("bounds a truncated day only when the page really is largest-first", () => {
+    const e = parseEarnings(earningsPage([2_400_000, 1_900_000, 104_935], 270));
+    expect(e.meta.complete).toBe(false);
+    expect(e.meta.capOrdered).toBe(true);
+    expect(e.meta.capFloor).toBe(104_935);
+  });
+
+  it("refuses the bound when the sort was ignored", () => {
+    // The live date-sorted default on 2026-10-29: ACR ($144M) ahead of ADP ($105B).
+    const e = parseEarnings(earningsPage([143.9, 696.1, 104_935], 270));
+    expect(e.meta.capOrdered).toBe(false);
+    expect(e.meta.capFloor).toBeNull();
+  });
+
+  it("refuses the bound when any row lacks a market cap", () => {
+    const e = parseEarnings(earningsPage([2_400_000, undefined, 104_935], 270));
+    expect(e.meta.capOrdered).toBe(false);
+    expect(e.meta.capFloor).toBeNull();
+  });
+});
+
 describe("parseEconomic", () => {
   it("reads the 0..n keyed object and keeps the impact rating", () => {
     const e = parseEconomic(ECONOMIC);

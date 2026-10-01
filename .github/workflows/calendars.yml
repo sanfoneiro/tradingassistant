@@ -1,0 +1,62 @@
+name: Catalyst calendar
+
+# Earnings, macro releases and ex-dividend dates — the inputs to the two event
+# vetoes. This was a manual `npm run calendars:sync`, which meant the calendar
+# was exactly as fresh as the last time someone remembered: on 2026-10-01 the
+# stored earnings ended at 10-16, before any focus-list name reported.
+#
+# It needs no browser and no judgement, so it is a script, not an agent, and
+# it needs no DATABASE_URL — it writes through /api/ingest like the sweep.
+#
+# Required repository secrets (shared with zones.yml):
+#   MASSIVE_API_KEY   ex-dividend dates come from Massive, not Finviz
+#   INGEST_TOKEN      the same bearer token the app expects
+
+on:
+  schedule:
+    # Sunday to Friday at 21:30 UTC — after the US close in both EDT and EST,
+    # ahead of the 22:10 sweep and of the next day's grader. Sunday catches
+    # the week's confirmed dates before Monday's run.
+    - cron: "30 21 * * 0-5"
+  workflow_dispatch:
+    inputs:
+      horizon:
+        description: "Days forward (blank = 35)"
+        required: false
+        type: string
+
+concurrency:
+  # The payload REPLACES the kinds it names. Two runs at once would race.
+  group: catalyst-calendar
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 24 for npm 11 — see the note in zones.yml.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      # The parser decides what counts as a complete day. A broken one must
+      # stop the run before it replaces anything.
+      - name: Test the calendar parser
+        run: npx vitest run src/lib/finviz.test.ts
+
+      - name: Sync
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+          APP_URL: ${{ vars.APP_URL }}
+        # 35 days, not the script's 28: peak earnings season sits three to
+        # five weeks out, and a horizon that stops short of it is the gap
+        # this workflow exists to close.
+        run: npx tsx src/db/sync-calendars.ts ${{ inputs.horizon || '35' }}

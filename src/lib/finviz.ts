@@ -44,6 +44,25 @@ export type Completeness = {
   complete: boolean;
 };
 
+/**
+ * Earnings pages are requested largest-company-first, and this records
+ * whether that ordering actually HELD on the page that came back.
+ *
+ * It matters only on a truncated day. Peak season runs to 300 reports a
+ * session and Finviz delivers 50, so the date-sorted default kept 50 names
+ * by ticker order — ACR, ADAM, ADP — and AMZN, AAPL and GOOGL fell off
+ * every day they report. Sorted by market cap, a truncated day keeps the 50
+ * largest and loses only names smaller than `capFloor`. That is a known,
+ * bounded loss rather than an arbitrary one — but only if the sort was
+ * honoured, which is checked rather than assumed.
+ */
+export type EarningsMeta = Completeness & {
+  /** Every row's marketCap is present and non-increasing down the page. */
+  capOrdered: boolean;
+  /** The smallest market cap on the page, $M. Null on an empty page. */
+  capFloor: number | null;
+};
+
 export type EarningsEvent = {
   ticker: string;
   company: string;
@@ -128,8 +147,16 @@ function entriesOf(data: Record<string, unknown>): {
   return { items, meta: { total, complete: items.length >= total } };
 }
 
-export function parseEarnings(html: string): EarningsEvent[] & { meta: Completeness } {
-  const { items, meta } = entriesOf(parseRouteInitData(html));
+export function parseEarnings(html: string): EarningsEvent[] & { meta: EarningsMeta } {
+  const { items, meta: base } = entriesOf(parseRouteInitData(html));
+  const caps = items.map((r) => (typeof r.marketCap === "number" ? r.marketCap : NaN));
+  const capOrdered =
+    caps.every((c) => Number.isFinite(c)) && caps.every((c, i) => i === 0 || c <= caps[i - 1]);
+  const meta: EarningsMeta = {
+    ...base,
+    capOrdered,
+    capFloor: caps.length && capOrdered ? caps[caps.length - 1] : null,
+  };
   const out = items
     .filter((r) => typeof r.ticker === "string" && typeof r.earningsDate === "string")
     .map((r) => ({
@@ -180,8 +207,10 @@ const UA =
 export async function fetchCalendar(
   kind: "earnings" | "economic" | "dividends",
   dateFrom: string,
+  sort?: "-marketCap",
 ): Promise<string> {
-  const res = await fetch(`${BASE}/${kind}?dateFrom=${dateFrom}`, {
+  const q = `dateFrom=${dateFrom}${sort ? `&sort=${sort}` : ""}`;
+  const res = await fetch(`${BASE}/${kind}?${q}`, {
     headers: { "User-Agent": UA, Accept: "text/html" },
   });
   if (!res.ok) {

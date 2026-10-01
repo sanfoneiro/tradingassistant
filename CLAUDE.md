@@ -300,7 +300,7 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 | Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
 | Grade candidates | **17:30 IDT weekdays** | local Routine — real judgment |
 | Score signals | **manual** (`npm run signals:score`) | local — replays every suggestion, taken or not |
-| Calendar sync | **manual** (`npm run calendars:sync`) | anywhere — no browser, no judgement |
+| Calendar sync | 21:30 UTC Sun–Fri, 35 days ahead | GitHub Actions (`calendars.yml`) — no browser, no judgement |
 | Bars backfill | **manual** (`npm run bars:backfill`) | resumable; `-- --daily` extends by one session |
 | Position watch | **manual** (`npm run positions:watch`) | news + scheduled events for open names |
 
@@ -321,8 +321,16 @@ agent that opens Chrome to read the broker, which it does not.
 **All three live in Routines** (`claude.ai/code/routines`), not in Cowork's
 Scheduled tasks. A cloud Routine also exists for the grader, **paused**: cloud
 runs cannot reach `.agent-token` or `.env`, and a test on 2026-08-26 correctly
-refused to start rather than falling back to web search. Un-pause it the day
-secrets can be attached to the environment.
+refused to start rather than falling back to web search.
+
+On 2026-10-01 its prompt was cut to the same pointer as the local task — it
+had been a full copy, and had drifted (no focus-list rule) — and the grader
+section of `docs/AGENTS.md` now reads secrets from the environment when the
+files are absent. **What is left is Oron's:** add `INGEST_TOKEN` and
+`MASSIVE_API_KEY` to the cloud environment's variables, allow network access
+to `project-alr3f.vercel.app` and `api.massive.com`, run it once by hand, and
+only then disable the local task. Run both at once and every candidate is
+graded twice.
 
 **Two intraday crons fire and one exits quietly.** Israel and the US change DST
 on different dates, so a fixed UTC time drifts an hour twice a year.
@@ -500,7 +508,10 @@ tell one Oron acted on from one silently retracted.
   CLOSED trade, except on the entry day.
 - **MAE/MFE aside, the calendar now exists** (`npm run calendars:sync`, 2,371
   rows on 2026-08-28). Earnings and macro come from Finviz's server-rendered
-  `route-init-data` blob; ex-dividends come from **Massive**, because Finviz
+  `route-init-data` blob, requested **`sort=-marketCap`** so a day past
+  Finviz's 50-row cap keeps the 50 largest reporters (the date-sorted default
+  kept ACR and ADAM and dropped AMZN and AAPL; the ordering is verified per
+  page, and a page that ignored the sort still fails the set); ex-dividends come from **Massive**, because Finviz
   caps a day at 50 rows and its `&page=2` is ignored — 2026-08-31 reported 77
   and delivered 50, where Massive returned 177 with a working `next_url`.
   **An empty Finviz day means UNKNOWN, never "nothing scheduled":** 2026-10-05

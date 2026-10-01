@@ -104,6 +104,8 @@ async function main() {
     dividends: { kinds: ["ex_dividend"], items: [], failed: false },
   };
   const failures: string[] = [];
+  /** Truncated earnings days whose loss is bounded below a market cap. */
+  const truncations: string[] = [];
   let emptyDays = 0;
 
   /* ---------------- earnings: one request per day ---------------- */
@@ -119,7 +121,9 @@ async function main() {
     if (dow === 0 || dow === 6) continue;
     tradingDays++;
     try {
-      const rows = parseEarnings(await fetchCalendar("earnings", day));
+      // Largest first, so a truncated day loses the smallest names rather
+      // than whichever tickers sort last. See EarningsMeta in finviz.ts.
+      const rows = parseEarnings(await fetchCalendar("earnings", day, "-marketCap"));
       if (!rows.length) emptyDays++;
       else earningsDays++;
       for (const e of rows) {
@@ -135,8 +139,20 @@ async function main() {
         });
       }
       if (!rows.meta.complete) {
-        failures.push(`earnings ${day} truncated (${rows.length}/${rows.meta.total})`);
-        groups.earnings.failed = true;
+        if (rows.meta.capOrdered && rows.meta.capFloor != null) {
+          // A bounded loss: every company above the floor is on the page.
+          // Recorded, not fatal — refusing here left the stored calendar
+          // ending 2026-10-16, before any core name's report date.
+          truncations.push(
+            `${day} ${rows.length}/${rows.meta.total} (smallest kept $${(rows.meta.capFloor / 1000).toFixed(1)}B)`,
+          );
+        } else {
+          failures.push(
+            `earnings ${day} truncated (${rows.length}/${rows.meta.total}) and NOT ` +
+              `ordered by market cap — the sort was ignored, so the loss is arbitrary`,
+          );
+          groups.earnings.failed = true;
+        }
       }
       process.stdout.write(`  earnings ${day}: ${String(rows.length).padStart(3)}\r`);
     } catch (e) {
@@ -284,7 +300,11 @@ async function main() {
       (skipped.length
         ? `. NOT refreshed, prior rows kept: ${skipped.map(([n]) => n).join(", ")}`
         : "") +
-      (failures.length ? `. Problems: ${failures.join("; ").slice(0, 500)}` : ""),
+      (failures.length ? `. Problems: ${failures.join("; ").slice(0, 500)}` : "") +
+      (truncations.length
+        ? `. Earnings kept the largest companies only on ${truncations.length} day(s): ` +
+          truncations.join("; ").slice(0, 400)
+        : ""),
   });
 
   console.log(
@@ -292,6 +312,10 @@ async function main() {
       JSON.stringify(res),
   );
   console.log(`  ${summary}`);
+  if (truncations.length) {
+    console.log(`\nearnings kept the largest companies only on ${truncations.length} day(s):`);
+    for (const t of truncations) console.log(`  - ${t}`);
+  }
   if (failures.length) {
     console.log(`\n${failures.length} problem(s):`);
     for (const f of failures.slice(0, 15)) console.log(`  - ${f}`);
