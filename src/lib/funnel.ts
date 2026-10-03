@@ -52,3 +52,26 @@ export function daysWaiting(since: Date | null, now: Date = new Date()): number 
   if (!since) return null;
   return Math.floor((now.getTime() - since.getTime()) / 86_400_000);
 }
+
+/**
+ * A wishlist row nobody has re-priced in this long is retired.
+ *
+ * Only a sweep that SEES a symbol rewrites its row, and the sweep only sees
+ * the saved screen plus the focus list. A name that leaves both is never
+ * looked at again, so its row stayed `active` with a frozen distance and
+ * score: on 2026-10-03, 164 active rows tied to neither of the last two
+ * closes (AGCO, MP, ZS, DASH, LRLCY), and the grader's band filter read
+ * them as live.
+ *
+ * Five days because a healthy sweep touches every covered row Tuesday to
+ * Saturday, so the longest normal gap is Saturday to Tuesday — three days.
+ * Five tolerates one failed run on top of a weekend without retiring the
+ * whole list, and a row retired in error comes back on the next sweep that
+ * sees the symbol: the upsert sets `active` afresh.
+ */
+export const WISHLIST_STALE_DAYS = 5;
+
+/** Rows last written before this instant are stale. */
+export function wishlistStaleBefore(now: Date = new Date()): Date {
+  return new Date(now.getTime() - WISHLIST_STALE_DAYS * 86_400_000);
+}

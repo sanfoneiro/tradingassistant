@@ -4,6 +4,7 @@ import {
   worthWatching,
   triggerStamp,
   daysWaiting,
+  wishlistStaleBefore,
   TRIGGER_BAND_PCT,
   WATCH_BAND_PCT,
 } from "./funnel";
@@ -72,5 +73,24 @@ describe("daysWaiting", () => {
 
   it("is null when nothing is waiting", () => {
     expect(daysWaiting(null)).toBeNull();
+  });
+});
+
+describe("wishlistStaleBefore", () => {
+  // The sweep runs 06:10 UTC Tuesday-Saturday. A row it wrote on Saturday
+  // must survive the weekend AND one failed run after it.
+  const writtenSat = new Date("2026-10-03T06:40:00Z");
+  const stale = (written: Date, now: Date) => written < wishlistStaleBefore(now);
+
+  it("keeps a row across the weekend gap", () => {
+    expect(stale(writtenSat, new Date("2026-10-06T06:30:00Z"))).toBe(false); // Tue
+  });
+
+  it("keeps it through one missed run on top of the weekend", () => {
+    expect(stale(writtenSat, new Date("2026-10-07T06:30:00Z"))).toBe(false); // Wed
+  });
+
+  it("retires a row nothing has re-priced for a week", () => {
+    expect(stale(writtenSat, new Date("2026-10-09T06:30:00Z"))).toBe(true); // Fri
   });
 });

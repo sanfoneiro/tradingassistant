@@ -15,7 +15,7 @@ name: Catalyst calendar
 on:
   schedule:
     # Sunday to Friday at 21:30 UTC — after the US close in both EDT and EST,
-    # ahead of the 22:10 sweep and of the next day's grader. Sunday catches
+    # ahead of the 06:10 sweep and of the next day's grader. Sunday catches
     # the week's confirmed dates before Monday's run.
     - cron: "30 21 * * 0-5"
   workflow_dispatch:

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, and, sql, isNull } from "drizzle-orm";
+import { eq, and, sql, isNull, lt } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accounts,
@@ -18,7 +18,7 @@ import {
 import { ingestPayload } from "@/lib/ingest-schema";
 import { checkIngestToken } from "@/lib/auth";
 import { positionRisk } from "@/lib/metrics";
-import { TRIGGER_BAND_PCT, triggerStamp } from "@/lib/funnel";
+import { TRIGGER_BAND_PCT, triggerStamp, wishlistStaleBefore } from "@/lib/funnel";
 import { matchActionItem, unraisedItems } from "@/lib/action-items";
 import { replacedCatalysts } from "@/lib/catalyst-scope";
 
@@ -354,6 +354,28 @@ function normalizeTimeframe(tf: string): string {
   return map[t] ?? tf.trim().toUpperCase();
 }
 
+/**
+ * A wishlist row is a trigger on ONE zone. When that zone closes through its
+ * distal edge the trigger is dead, but the row used to stay `active` with the
+ * old score until a sweep happened to pick a different nearest zone for the
+ * symbol — MHGVY was still offered at score 66 on a zone that had already
+ * broken. Retiring it here, at the break, is the same rule the suggestions
+ * table already follows.
+ *
+ * Only `tested_broken` does this. `expired` means the zone stopped being
+ * tracked, not that anything happened to price, and must not kill anything
+ * downstream (CLAUDE.md, "Zones leave two different ways"). A row left
+ * pointing at an expired zone is caught by the staleness rule instead.
+ */
+async function retireWishlistOnBreak(zoneId: number): Promise<number> {
+  const rows = await db
+    .update(wishlist)
+    .set({ active: false })
+    .where(and(eq(wishlist.zoneId, zoneId), eq(wishlist.active, true)))
+    .returning({ id: wishlist.id });
+  return rows.length;
+}
+
 async function handleZone(p: Extract<P, { kind: "zone" }>) {
   const timeframe = normalizeTimeframe(p.timeframe);
 
@@ -443,7 +465,8 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
       })
       .where(eq(zones.id, existing[0].id));
 
-    // A broken zone kills every suggestion that depended on it.
+    // A broken zone kills every suggestion that depended on it, and every
+    // wishlist row still waiting on it.
     if (wasBroken) {
       await db
         .update(suggestions)
@@ -454,6 +477,7 @@ async function handleZone(p: Extract<P, { kind: "zone" }>) {
             eq(suggestions.status, "open"),
           ),
         );
+      await retireWishlistOnBreak(existing[0].id);
     }
     return { ok: true, zoneId: existing[0].id, updated: true };
   }
@@ -550,6 +574,7 @@ async function handleZoneSet(p: Extract<P, { kind: "zone_set" }>) {
 
   let brokenCount = 0;
   let suggestionsExpired = 0;
+  let wishlistRetired = 0;
 
   for (const b of p.broken) {
     const prev = matchByStop(b.stopLevel, b.direction);
@@ -575,6 +600,7 @@ async function handleZoneSet(p: Extract<P, { kind: "zone_set" }>) {
         .where(and(eq(suggestions.zoneId, prev.id), eq(suggestions.status, "open")))
         .returning({ id: suggestions.id });
       suggestionsExpired += killed.length;
+      wishlistRetired += await retireWishlistOnBreak(prev.id);
     }
   }
 
@@ -599,6 +625,7 @@ async function handleZoneSet(p: Extract<P, { kind: "zone_set" }>) {
     broken: brokenCount,
     expired: dropped.length,
     suggestionsExpired,
+    wishlistRetired,
     ids,
   };
 }
@@ -797,7 +824,21 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
       created++;
     }
   }
-  return { ok: true, created, updated };
+
+  /**
+   * Retire what nobody is pricing any more. Only a sweep that sees a symbol
+   * rewrites its row, so a name that left the screen and the focus list kept
+   * an `active` row with a frozen distance indefinitely. Run here, after the
+   * upserts, so every row this payload just wrote is fresh and safe. See
+   * WISHLIST_STALE_DAYS for why five.
+   */
+  const retired = await db
+    .update(wishlist)
+    .set({ active: false })
+    .where(and(eq(wishlist.active, true), lt(wishlist.updatedAt, wishlistStaleBefore())))
+    .returning({ symbol: wishlist.symbol });
+
+  return { ok: true, created, updated, retiredStale: retired.length };
 }
 
 /**
