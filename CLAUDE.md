@@ -288,7 +288,16 @@ re-priced in `WISHLIST_STALE_DAYS` (5, in `funnel.ts`) — only a sweep that
 sees a symbol rewrites its row, so a name that left the screen kept a frozen
 distance forever: 175 of 251 active rows on the day this landed. Retired is
 `active = false`, never deleted, and the next sweep that sees the name sets
-it afresh. Rows are expired, never deleted: trades point at
+it afresh.
+
+**Every distance carries its session** (`wishlist.priced_session`, 0012).
+The sweep stamps the session its bars end on; a writer that does not know
+leaves it NULL, never the old row's date. The grader reprices before it
+bands (`wishlist_reprice`), and that kind deliberately leaves `updatedAt`
+alone — a row nobody re-sweeps must still retire on time however fresh its
+distance. First run, 2026-10-03: 72 rows re-measured from grouped daily,
+every one identical to the sweep's own figure to four decimals; 4 OTC names
+(NVZMF RWNFF SDMHF KHOLY) have no grouped close and stay unpriced. Rows are expired, never deleted: trades point at
 zones by id, and the weekly review's "zones tested held vs broke" needs them.
 
 Only breaks from the last 5 bars are reported — the engine is stateless and
@@ -312,6 +321,7 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 | Calendar sync | 21:30 UTC Sun–Fri, 35 days ahead | GitHub Actions (`calendars.yml`) — no browser, no judgement |
 | Bars backfill | **manual** (`npm run bars:backfill`) | resumable; `-- --daily` extends by one session |
 | Position watch | **manual** (`npm run positions:watch`) | news + scheduled events for open names |
+| Wishlist reprice | **inside every grader run** (STEP 1b) | one grouped-daily call; API-only, so it runs in the cloud |
 
 **"Local" covers two different reasons.** Morning Sync needs a logged-in
 Chrome. The grader needs only credentials — `.agent-token` and `.env` are
@@ -435,7 +445,9 @@ src/lib/finviz.ts      earnings + economic calendars; empty means UNKNOWN
 src/lib/news.ts        ticker-scoped news; insight selected BY TICKER
 src/lib/ingest-client.ts  one definition of how a job authenticates
 src/lib/sweep-queue.ts the sweep's queue: focus list first, then the screen
+src/lib/reprice.ts     re-measuring wishlist distances — distances, never levels
 src/db/sweep-zones.ts  the universe sweep (runs in CI)
+src/db/reprice-wishlist.ts  every active distance from one grouped call
 src/db/sync-calendars.ts  the catalyst calendar (earnings, macro, ex-div)
 src/db/backfill-bars.ts   grouped daily -> the bars table
 src/db/watch-positions.ts news + scheduled events for what we already hold
