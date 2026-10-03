@@ -543,8 +543,18 @@ tell one Oron acted on from one silently retracted.
   `isEarningDateEstimate`, which is why `kind` is `earnings_estimated` rather
   than `earnings`. Dates and events only — never a price from a web page.
 - **The signal scorer runs by hand** (`npm run signals:score`) and has no page.
-  Nine outcomes so far — far too few to read. Wire it into the sweep, and build
-  the report at forty or fifty, not before.
+  First full run 2026-10-03: 145 verdicts scored, **98 unique setups** (first
+  verdict per symbol+side+zone — the grader re-posts a setup daily, and
+  counting repeats overstates n by half). Of 53 decided: **5 targets, 48
+  stops, 9% win rate, −0.68R average net.** Passed-every-gate setups did no
+  better than blocked ones (1/17, −0.86R against 4/36, −0.60R); the focus
+  list went 0/11; no grade separated from C. Three stop-outs (TPG, HTHT, DHR)
+  were re-checked bar by bar and are real. Stops were spread across every
+  week from Aug 17, not one sell-off — but it is still one six-week window,
+  81 of 98 long, and decided outcomes overlap in time. Break-even at the
+  ~2.5R targets these carry is roughly 29%; 5 of 53 is far below it. Treat it
+  as the first evidence against the entry method itself, not yet a verdict.
+  Scoring needs `DATABASE_URL`, so it cannot run in the cloud grader as is.
 - **Treat every `rules.note` as a claim to re-derive.** Two were rewritten on
   2026-08-25 because they cited figures no trade supported, and one of the
   replacements had to be retracted the same session when a single omitted trade
