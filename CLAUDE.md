@@ -298,7 +298,7 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 | Zone sweep | 22:10 UTC (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions |
 | Morning Sync | **manual, on demand** | local — Colmex has no API, and Oron runs it himself when he holds positions |
 | Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
-| Grade candidates | **17:30 IDT weekdays** | local Routine — real judgment |
+| Grade candidates | **14:30 UTC weekdays** | **cloud** Routine — real judgment; the local task is paused as a fallback |
 | Score signals | **manual** (`npm run signals:score`) | local — replays every suggestion, taken or not |
 | Calendar sync | 21:30 UTC Sun–Fri, 35 days ahead | GitHub Actions (`calendars.yml`) — no browser, no judgement |
 | Bars backfill | **manual** (`npm run bars:backfill`) | resumable; `-- --daily` extends by one session |
@@ -326,11 +326,13 @@ refused to start rather than falling back to web search.
 On 2026-10-01 its prompt was cut to the same pointer as the local task — it
 had been a full copy, and had drifted (no focus-list rule) — and the grader
 section of `docs/AGENTS.md` now reads secrets from the environment when the
-files are absent. **What is left is Oron's:** add `INGEST_TOKEN` and
-`MASSIVE_API_KEY` to the cloud environment's variables, allow network access
-to `project-alr3f.vercel.app` and `api.massive.com`, run it once by hand, and
-only then disable the local task. Run both at once and every candidate is
-graded twice.
+files are absent. **Since 2026-10-03 the cloud Routine is LIVE** in its own
+environment ("TradingAssistant": the two secrets as variables, network
+allowed to `project-alr3f.vercel.app` and `api.massive.com`). Its first
+manual run reached both, verified bars and posted four verdicts plus a `run`
+in six minutes. The local task is paused, not deleted — never enable both,
+or every candidate is graded twice. Rotating the ingest token now means FIVE
+places: add that environment to the list below.
 
 **Two intraday crons fire and one exits quietly.** Israel and the US change DST
 on different dates, so a fixed UTC time drifts an hour twice a year.
@@ -527,5 +529,6 @@ tell one Oron acted on from one silently retracted.
   replacements had to be retracted the same session when a single omitted trade
   (NTRA, +$273) moved its bucket from −$347 to −$74.
 - **The ingest token was pasted into a chat on 2026-08-26** and sits in
-  plaintext inside an old Cowork task. Rotating it means four places: Vercel
-  env, `.agent-token`, the GitHub Actions secret, and that task.
+  plaintext inside an old Cowork task. Rotating it means five places: Vercel
+  env, `.agent-token`, the GitHub Actions secret, the cloud Routine's
+  "TradingAssistant" environment, and that task.
