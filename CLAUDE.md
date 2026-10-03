@@ -279,7 +279,16 @@ convention here — a zone records where real orders rested.
 | `expired` | no longer tracked — outside the cap, or symbol left the screen | nothing happened to the price, nothing downstream dies |
 
 Conflating them would have the sweep quietly killing ideas every time it
-narrowed its own attention. Rows are expired, never deleted: trades point at
+narrowed its own attention.
+
+**Wishlist rows retire two ways too** (since 2026-10-03, both in
+`/api/ingest`). A `tested_broken` zone retires the rows waiting on it, as it
+expires suggestions. And any wishlist write retires active rows nothing has
+re-priced in `WISHLIST_STALE_DAYS` (5, in `funnel.ts`) — only a sweep that
+sees a symbol rewrites its row, so a name that left the screen kept a frozen
+distance forever: 175 of 251 active rows on the day this landed. Retired is
+`active = false`, never deleted, and the next sweep that sees the name sets
+it afresh. Rows are expired, never deleted: trades point at
 zones by id, and the weekly review's "zones tested held vs broke" needs them.
 
 Only breaks from the last 5 bars are reported — the engine is stateless and
@@ -295,7 +304,7 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 
 | Job | When | Where |
 |---|---|---|
-| Zone sweep | 22:10 UTC (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions |
+| Zone sweep | **06:10 UTC Tue–Sat** (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions — 06:10 because the day's bar is not served until New York midnight; at 22:10 every run priced the session before |
 | Morning Sync | **manual, on demand** | local — Colmex has no API, and Oron runs it himself when he holds positions |
 | Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
 | Grade candidates | **14:30 UTC weekdays** | **cloud** Routine — real judgment; the local task is paused as a fallback |

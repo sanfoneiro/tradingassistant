@@ -18,7 +18,7 @@ Six agents. All times **Israel (IDT)**. US market hours in Israel time are
 | Job | When | Where | Role |
 |---|---|---|---|
 | Morning Sync & Brief | **manual, on demand** | local agent | **Canonical sync.** Reads pasted Colmex screenshots. Deliberately unscheduled — Oron runs it when he holds positions. |
-| Zone sweep | 22:10 UTC + 13:45/14:45 UTC Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser, no secrets problem — they live in GitHub Secrets. |
+| Zone sweep | 06:10 UTC Tue–Sat + 13:45/14:45 UTC Mon–Fri | GitHub Actions | Zones, coverage, wishlist. No browser, no secrets problem — they live in GitHub Secrets. |
 | Grade candidates | **17:30 IDT Mon–Fri** | local scheduled task | Judgment. Prompt lives in this file, not in the task. |
 | Universe Refresh | weekly, Sunday | local scheduled task | Pine cannot read the TradingView Screener. |
 | Weekly Review | Sat 09:00 | *not built* | Compounding loop. |
