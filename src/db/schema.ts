@@ -270,6 +270,10 @@ export const wishlist = pgTable(
     /** Distance from the trigger at the last screen, in %. Lets the
      *  watchlist sort by "closest to going live". */
     distancePct: doublePrecision("distance_pct"),
+    /** The trading session `distancePct` was measured against. Null when the
+     *  writer did not say — a distance with no date is a claim nobody can
+     *  check, so it must look different from one that has one. */
+    pricedSession: date("priced_session", { mode: "string" }),
     /** How the zone reads against the trend it sits in. The one factor that
      *  decides ordering — a zone's shape means nothing without it. */
     quadrant: quadrantEnum("quadrant"),

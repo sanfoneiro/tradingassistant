@@ -60,6 +60,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await handleActionItems(p));
       case "wishlist":
         return NextResponse.json(await handleWishlist(p));
+      case "wishlist_reprice":
+        return NextResponse.json(await handleWishlistReprice(p));
       case "universe":
         return NextResponse.json(await handleUniverse(p));
       case "screener_pass":
@@ -805,6 +807,9 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
       triggerNote: w.triggerNote ?? null,
       triggerLevel: w.triggerLevel ?? null,
       distancePct: w.distancePct ?? null,
+      // Null when the writer did not say. Never inherited from the old row:
+      // a new distance with the previous distance's date is a wrong date.
+      pricedSession: w.pricedSession ?? null,
       quadrant: w.quadrant ?? null,
       score: w.score ?? null,
       scoreReasons: w.scoreReasons ?? [],
@@ -839,6 +844,48 @@ async function handleWishlist(p: Extract<P, { kind: "wishlist" }>) {
     .returning({ symbol: wishlist.symbol });
 
   return { ok: true, created, updated, retiredStale: retired.length };
+}
+
+/**
+ * Distances only. Deliberately does NOT touch `updatedAt`: that stamp is what
+ * the staleness rule reads as "a sweep last looked at this structure", and a
+ * row whose zones nobody re-checks for breaks must still retire on time
+ * however often its distance is refreshed.
+ *
+ * Refuses a write that would move a row to an OLDER session, and one whose
+ * trigger moved since the repricer read it — the sweep may have repointed the
+ * row at a different zone in between, and a distance from the old trigger
+ * would then be a plausible wrong number.
+ */
+async function handleWishlistReprice(p: Extract<P, { kind: "wishlist_reprice" }>) {
+  let updated = 0;
+  const skipped: string[] = [];
+  for (const it of p.items) {
+    const [prev] = await db
+      .select()
+      .from(wishlist)
+      .where(and(eq(wishlist.symbol, it.symbol), eq(wishlist.active, true)))
+      .limit(1);
+    if (
+      !prev ||
+      prev.triggerLevel == null ||
+      Math.abs(prev.triggerLevel - it.triggerLevel) > 1e-6 ||
+      (prev.pricedSession != null && prev.pricedSession > it.pricedSession)
+    ) {
+      skipped.push(it.symbol);
+      continue;
+    }
+    await db
+      .update(wishlist)
+      .set({
+        distancePct: it.distancePct,
+        pricedSession: it.pricedSession,
+        triggeredAt: triggerStamp(it.distancePct, prev.triggeredAt ?? null),
+      })
+      .where(eq(wishlist.id, prev.id));
+    updated++;
+  }
+  return { ok: true, updated, skipped };
 }
 
 /**

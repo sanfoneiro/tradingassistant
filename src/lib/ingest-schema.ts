@@ -231,6 +231,9 @@ export const wishlistIn = z.object({
       triggerLevel: z.number().nullable().optional(),
       /** % away at the time of screening. */
       distancePct: z.number().nullable().optional(),
+      /** The session (YYYY-MM-DD) that distance was measured against. Omit
+       *  it when you do not know — it is stored as NULL, never guessed. */
+      pricedSession: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
       /** How the zone reads against the trend, and the structural rank the
        *  sweep computed. Ordering only — never a grade. */
       quadrant: z
@@ -242,6 +245,26 @@ export const wishlistIn = z.object({
       priority: z.number().int().min(1).max(5).optional(),
       /** Send false to retire an entry whose zone broke or thesis died. */
       active: z.boolean().optional(),
+    }),
+  ),
+});
+
+/**
+ * Re-measured distances, and nothing else. A full `wishlist` post replaces
+ * every field of the row, so repricing through it would mean re-sending
+ * levels and scores the repricer never computed. This kind touches only the
+ * distance, its session and the trigger stamp.
+ */
+export const wishlistRepriceIn = z.object({
+  kind: z.literal("wishlist_reprice"),
+  items: z.array(
+    z.object({
+      symbol: z.string().min(1),
+      /** The trigger the distance was measured from. The write is refused if
+       *  the stored trigger has moved since. */
+      triggerLevel: z.number(),
+      distancePct: z.number(),
+      pricedSession: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     }),
   ),
 });
@@ -327,6 +350,7 @@ export const ingestPayload = z.discriminatedUnion("kind", [
   suggestionIn,
   actionItemIn,
   wishlistIn,
+  wishlistRepriceIn,
   universeIn,
   screenerPassIn,
   catalystIn,

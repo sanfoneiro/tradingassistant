@@ -314,6 +314,7 @@ async function main() {
     zoneId: number;
     triggerLevel: number;
     distancePct: number;
+    pricedSession: string;
     triggerNote: string;
     quadrant: Quadrant;
     score: number;
@@ -498,6 +499,8 @@ async function main() {
           zoneId: closest.zoneId,
           triggerLevel: round(closest.zone.entry),
           distancePct: round(nearest!),
+          // The session the bars end on, which is what the distance means.
+          pricedSession: session,
           triggerNote:
             `price reaches the ${closest.tf} ${closest.zone.direction} edge at ` +
             `${round(closest.zone.entry)} (${closest.zone.mitigated ? "mitigated" : "fresh"}, ` +

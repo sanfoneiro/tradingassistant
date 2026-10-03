@@ -534,7 +534,31 @@ and is deliberately unscheduled, so `markSource` may be "manual" and `asOf`
 may be old — if positions are open and `asOf` is stale, say so plainly rather
 than sizing silently against a book you cannot see.
 
+STEP 1b — REPRICE BEFORE YOU BAND
+Run `npx tsx src/db/reprice-wishlist.ts` (locally `npm run wishlist:reprice`
+works too). One grouped-daily call re-measures every active wishlist
+distance against the newest session the plan serves, and it says which
+session that was. Then GET /api/state AGAIN and shortlist from the new copy.
+
+Every wishlist row now carries `pricedSession` — the session its distance
+was measured against. After the reprice, every row should show the session
+the script reported. A row that does not is one the grouped file had no
+close for (the script names them): verify those per ticker in STEP 3 or
+leave them out and say so. Never band on a distance whose `pricedSession` is
+older than the newest served session, or null.
+
+Why: on 2026-10-03 every distance tied exactly to THURSDAY's close, a
+session behind, because the sweep then ran before the plan served the day's
+bar. The sweep has since moved to 06:10 UTC, so on a healthy day the script
+finds every row current and posts nothing — it is the check, not the fix.
+
 STEP 2 — SHORTLIST, DO NOT GRADE EVERYTHING
+Only rows whose zone is still live: look the row's `zoneId` up in `zones`
+and skip it if that zone's status is `tested_broken` or `expired`. A break
+retires the row automatically now, but an expired zone does not — by
+design, since expiry means the sweep stopped tracking it, not that price
+did anything — so the row can outlive its zone by up to five days.
+
 Two sources, and the second is NOT filtered by score.
 
   (a) THE WIDE SAMPLE. From `wishlist`: |distancePct| <= 2 AND score >= 50
@@ -569,8 +593,17 @@ list. If the honest verdict is C and blocked, post C and blocked.
 
 STEP 3 — VERIFY PRICES YOURSELF
 Fetch bars via src/lib/massive.ts and confirm each candidate ties out against
-the wishlist `distancePct`. Report any that do not instead of grading them.
-Say whether the last bar is today's or the prior close. Compute 14-day ADR.
+the wishlist `distancePct` AT ITS `pricedSession` — the last bar's session
+must equal it, and the close must reproduce the distance. Report any that do
+not instead of grading them. Say whether the last bar is today's or the
+prior close. Compute 14-day ADR.
+
+Check every OPEN suggestion against its zone as it stands in `zones` now. A
+tag that does not break a zone still mitigates it — the proximal edge moves
+to the tag — so a ticket can be left with an entry outside its own zone:
+on 2026-10-03 SAP's 207.46 entry sat above a zone that had become
+203.74–206.36, and ONC's 354.05 above 348.76–349.74. Re-grade such a ticket
+from the current edge; do not leave the old entry standing.
 
 STEP 4 — GRADE
 Use the trade-setup-grader skill. Screen ZONE-FIRST, then filter by catalyst —
