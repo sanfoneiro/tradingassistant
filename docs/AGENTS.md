@@ -413,6 +413,9 @@ with it.
 
 ### Universe Refresh — weekly, Sunday 18:00
 
+**PAUSED 2026-10-07** — the zone entry failed its control test (CLAUDE.md,
+"Does a zone beat no zone?"). Do not re-enable it for the zone method.
+
 Reads the saved TradingView screen, which Pine cannot do. Needs a logged-in
 Chrome, so this one is genuinely local for browser reasons, not credential
 reasons.
@@ -490,6 +493,10 @@ screen is Oron's call.
 every copy of the prompt and every screenshot of it.
 
 ### Grade candidates — weekdays 17:30 IDT, after the intraday sweep
+
+**PAUSED 2026-10-07, cloud Routine and local task both** — the zone entry
+failed its control test (CLAUDE.md, "Does a zone beat no zone?"). Do not
+re-enable either for the zone method.
 
 **This section IS the scheduled task.** The task in the desktop app holds only
 a pointer to it, so editing the prompt below changes what the next run does —

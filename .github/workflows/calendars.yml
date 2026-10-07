@@ -13,11 +13,16 @@ name: Catalyst calendar
 #   INGEST_TOKEN      the same bearer token the app expects
 
 on:
-  schedule:
-    # Sunday to Friday at 21:30 UTC — after the US close in both EDT and EST,
-    # ahead of the 06:10 sweep and of the next day's grader. Sunday catches
-    # the week's confirmed dates before Monday's run.
-    - cron: "30 21 * * 0-5"
+  # PAUSED 2026-10-07. The zone entry failed its control test (CLAUDE.md,
+  # "Does a zone beat no zone?"), so nothing downstream needs this on a
+  # timer. The schedule is kept below with its reasons; uncomment the
+  # `schedule:` block to restore it. "Run workflow" still works by hand.
+  #
+  # schedule:
+  #   # Sunday to Friday at 21:30 UTC — after the US close in both EDT and EST,
+  #   # ahead of the 06:10 sweep and of the next day's grader. Sunday catches
+  #   # the week's confirmed dates before Monday's run.
+  #   - cron: "30 21 * * 0-5"
   workflow_dispatch:
     inputs:
       horizon:

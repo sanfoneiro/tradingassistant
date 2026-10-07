@@ -18,29 +18,34 @@ name: Zone sweep
 #   APP_URL           defaults to the production deployment
 
 on:
-  schedule:
-    # After the close AND after New York midnight: 06:10 UTC, Tuesday to
-    # Saturday. This is the run that establishes the levels.
-    #
-    # It used to fire at 22:10 UTC on the assumption that the day's bar is
-    # final once the close has passed. On this PREVIOUS-DAY-ONLY plan it is
-    # not served at all until the New York date rolls over, so every
-    # evening sweep priced against the session BEFORE — the run log shows
-    # them finishing 00:28-02:09 UTC, still the prior evening in New York,
-    # and on 2026-10-03 every wishlist distance tied to Thursday's close
-    # rather than Friday's. 06:10 UTC is 02:10 EDT / 01:10 EST, an hour of
-    # margin past midnight in winter, and still eight hours ahead of the
-    # 14:30 UTC grader. Tuesday-Saturday covers the Monday-Friday sessions.
-    - cron: "10 6 * * 2-6"
-
-    # After the open: ~09:45 ET, once the first fifteen minutes of noise are
-    # out of the way. TWO entries because Israel and the US change DST on
-    # different dates — 13:45 UTC is 09:45 ET in EDT, 14:45 UTC is 09:45 ET
-    # in EST, and for a couple of weeks each spring and autumn the offsets
-    # do not line up. Both fire; --after-open checks the NEW YORK clock and
-    # the one outside the window exits quietly, so exactly one sweep runs.
-    - cron: "45 13 * * 1-5"
-    - cron: "45 14 * * 1-5"
+  # PAUSED 2026-10-07. The zone entry failed its control test (CLAUDE.md,
+  # "Does a zone beat no zone?"), so nothing downstream needs this on a
+  # timer. The schedule is kept below with its reasons; uncomment the
+  # `schedule:` block to restore it. "Run workflow" still works by hand.
+  #
+  # schedule:
+  #   # After the close AND after New York midnight: 06:10 UTC, Tuesday to
+  #   # Saturday. This is the run that establishes the levels.
+  #   #
+  #   # It used to fire at 22:10 UTC on the assumption that the day's bar is
+  #   # final once the close has passed. On this PREVIOUS-DAY-ONLY plan it is
+  #   # not served at all until the New York date rolls over, so every
+  #   # evening sweep priced against the session BEFORE — the run log shows
+  #   # them finishing 00:28-02:09 UTC, still the prior evening in New York,
+  #   # and on 2026-10-03 every wishlist distance tied to Thursday's close
+  #   # rather than Friday's. 06:10 UTC is 02:10 EDT / 01:10 EST, an hour of
+  #   # margin past midnight in winter, and still eight hours ahead of the
+  #   # 14:30 UTC grader. Tuesday-Saturday covers the Monday-Friday sessions.
+  #   - cron: "10 6 * * 2-6"
+  #
+  #   # After the open: ~09:45 ET, once the first fifteen minutes of noise are
+  #   # out of the way. TWO entries because Israel and the US change DST on
+  #   # different dates — 13:45 UTC is 09:45 ET in EDT, 14:45 UTC is 09:45 ET
+  #   # in EST, and for a couple of weeks each spring and autumn the offsets
+  #   # do not line up. Both fire; --after-open checks the NEW YORK clock and
+  #   # the one outside the window exits quietly, so exactly one sweep runs.
+  #   - cron: "45 13 * * 1-5"
+  #   - cron: "45 14 * * 1-5"
   workflow_dispatch:
     inputs:
       limit:

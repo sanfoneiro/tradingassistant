@@ -28,6 +28,7 @@
     "rules:sizing-policy": "tsx --env-file=.env src/db/set-sizing-policy.ts",
     "shortlist": "tsx --env-file=.env src/db/shortlist.ts",
     "trend:split": "tsx --env-file=.env src/db/trend-split.ts",
+    "edge:baseline": "tsx --env-file=.env src/db/edge-baseline.ts",
     "core:list": "tsx --env-file=.env src/db/core-list.ts",
     "wishlist:reprice": "tsx --env-file=.env src/db/reprice-wishlist.ts"
   },

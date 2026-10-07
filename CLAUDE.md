@@ -250,6 +250,54 @@ contested name clears the bar, so live data can NEVER test it — the veto
 prevents its own evidence. Contested resolved at 27.3% on 608 outcomes, the
 HIGHEST of the three buckets, though z=-1.13 against with-trend is not
 enough to act on. It is enough to stop calling the veto free.
+
+### Does a zone beat no zone? — 2026-10-07, `npm run edge:baseline`
+
+**No.** The trend split compares zones with zones: it can rank them and can
+never say whether any is worth trading. `edge:baseline` replays every zone AND
+the same order where there is no zone — same symbol, same SIDE (so the tape's
+drift cancels), same stop width, same 3R target. Two hash-split halves of 600
+symbols, ~46,000 decided zone trades:
+
+| entry | win% A / B | all-in R A / B |
+|---|---|---|
+| limit at the zone | 23.4 / 23.4 | +0.01 / +0.00 |
+| same date, level moved 0.25–1.5 ADR off the zone | 23.1 / 23.4 | −0.00 / +0.01 |
+| random date ±30 sessions, same distance from price | 25.8 / 25.8 | +0.10 / +0.10 |
+| method as written: touch, rejection close, next open | 22.0 / 21.8 | −0.03 / −0.03 |
+| the same rule around a shifted box | 21.6 / 21.7 | −0.04 / −0.04 |
+
+Break-even at 3R after the $4 round trip is ~26.3%.
+
+- **The zone's PRICE carries no information.** A random level beside it, on
+  the same date, does as well: −0.2..+0.9pp on A, −0.6..+0.5pp on B
+  (95%, resampling symbols).
+- **Its TIMING carries negative information.** The pullback right after the
+  impulse that made the zone loses 1.7–3.0pp to the same order on a random date.
+- **Rule 4's rejection is not about zones.** It scores the same at a random
+  level, and both score below the plain limit.
+
+It held in both years, for longs and shorts, and for with-trend quadrants
+alone. The positive row is the tape, not skill — QQQ rose 57% across the store.
+
+The live record agrees. The scorer's 98 unique setups (Aug 17 – Oct 6) went
+5W/48L; 37 of the 48 stops hit within two sessions of the fill. The same
+names, dates, stops and targets entered at the next OPEN went 15W/43L (the 71
+the store covers) — still −0.15R all-in, in a window where RSP fell 6.6% and
+IWM 8.9%. **A limit at the zone fills exactly when price is falling through it.**
+
+**Everything scheduled that feeds the zone funnel was paused that day:** the
+cloud grader Routine, the local Universe Refresh, and the `schedule:` triggers
+in `zones.yml` and `calendars.yml` (both keep `workflow_dispatch`). The app,
+journal and manual scripts are untouched. Re-enable only for a method that
+beats its control on the half it was NOT designed on.
+
+Two traps the script exists to avoid. Replay's R divides by the risk left
+after the fill, so a limit that gaps in near its stop reports an 11R winner
+that made 3.7R — R here is on the PLANNED stop. And a "holdout" built with
+`order by count(*) ... offset 300` overlapped its in-sample set by 150 of 600
+symbols, because ties broke differently; the halves are a hash now.
+
 ## The zone engine
 
 `src/lib/zones.ts` is a verified port of Oron's MTF Supply & Demand Pine
@@ -313,12 +361,12 @@ Two questions decide the substrate: **does it need the logged-in browser?** and
 
 | Job | When | Where |
 |---|---|---|
-| Zone sweep | **06:10 UTC Tue–Sat** (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions — 06:10 because the day's bar is not served until New York midnight; at 22:10 every run priced the session before |
+| Zone sweep | **PAUSED 2026-10-07**; was 06:10 UTC Tue–Sat (levels) + 13:45/14:45 UTC (distances) weekdays | GitHub Actions, `workflow_dispatch` only — 06:10 because the day's bar is not served until New York midnight; at 22:10 every run priced the session before |
 | Morning Sync | **manual, on demand** | local — Colmex has no API, and Oron runs it himself when he holds positions |
-| Universe Refresh | weekly, Sunday | local — Pine cannot read the TradingView Screener |
-| Grade candidates | **14:30 UTC weekdays** | **cloud** Routine — real judgment; the local task is paused as a fallback |
+| Universe Refresh | **PAUSED 2026-10-07**; was weekly, Sunday | local — Pine cannot read the TradingView Screener |
+| Grade candidates | **PAUSED 2026-10-07**; was 14:30 UTC weekdays | **cloud** Routine — real judgment; the local task is paused as a fallback |
 | Score signals | **manual** (`npm run signals:score`) | local — replays every suggestion, taken or not |
-| Calendar sync | 21:30 UTC Sun–Fri, 35 days ahead | GitHub Actions (`calendars.yml`) — no browser, no judgement |
+| Calendar sync | **PAUSED 2026-10-07**; was 21:30 UTC Sun–Fri, 35 days ahead | GitHub Actions (`calendars.yml`), `workflow_dispatch` only — no browser, no judgement |
 | Bars backfill | **manual** (`npm run bars:backfill`) | resumable; `-- --daily` extends by one session |
 | Position watch | **manual** (`npm run positions:watch`) | news + scheduled events for open names |
 | Wishlist reprice | **inside every grader run** (STEP 1b) | one grouped-daily call; API-only, so it runs in the cloud |
@@ -351,7 +399,8 @@ allowed to `project-alr3f.vercel.app` and `api.massive.com`). Its first
 manual run reached both, verified bars and posted four verdicts plus a `run`
 in six minutes. The local task is paused, not deleted — never enable both,
 or every candidate is graded twice. Rotating the ingest token now means FIVE
-places: add that environment to the list below.
+places: add that environment to the list below. **Both are PAUSED since
+2026-10-07**, with the rest of the funnel — see "Does a zone beat no zone?".
 
 **Two intraday crons fire and one exits quietly.** Israel and the US change DST
 on different dates, so a fixed UTC time drifts an hour twice a year.
@@ -436,6 +485,8 @@ src/lib/metrics.ts     R multiples, three risk figures, MAE/MFE, expectancy,
                        positionSize (the sizing WINDOW), checkStopPlacement
                        (both halves of rule 8), freeStopMove (needs an ADR)
 src/lib/replay.ts      replaying a signal against the bars that followed it
+src/lib/edge-baseline.ts  a zone vs the same order with no zone; R on the
+                       PLANNED stop; hash halves for design vs confirmation
 src/lib/action-items.ts  which open item an incoming one is talking about
 src/lib/colmex.ts      screenshot parse + the arithmetic that verifies it
 src/lib/massive.ts     market data, throttled, retries 429
@@ -458,6 +509,7 @@ src/db/set-sizing-policy.ts  the slot-count switch, forward and --revert
 src/db/core-list.ts    the focus list — show, --seed, --add, --remove
 src/db/shortlist.ts    per-name screen: tradeability, gaps, correlation
 src/db/trend-split.ts  does the trend filter earn its weight? (it does not)
+src/db/edge-baseline.ts  does a zone beat no zone? (it does not)
 src/app/api/ingest     the only write path agents use
 src/app/(app)/guide    how the system works, for the person trading with it
 docs/AGENTS.md         payload contracts and agent prompts
@@ -554,6 +606,8 @@ tell one Oron acted on from one silently retracted.
   81 of 98 long, and decided outcomes overlap in time. Break-even at the
   ~2.5R targets these carry is roughly 29%; 5 of 53 is far below it. Treat it
   as the first evidence against the entry method itself, not yet a verdict.
+  The verdict came four days later from the control test — see "Does a
+  zone beat no zone?".
   Scoring needs `DATABASE_URL`, so it cannot run in the cloud grader as is.
 - **Treat every `rules.note` as a claim to re-derive.** Two were rewritten on
   2026-08-25 because they cited figures no trade supported, and one of the
